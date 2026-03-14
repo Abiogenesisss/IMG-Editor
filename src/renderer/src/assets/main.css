@@ -119,6 +119,44 @@
   border-color: #b0b0b0;
 }
 
+.folder-input {
+  flex: 1;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 2px;
+  font-size: 13px;
+  color: #1b1b1f;
+  outline: none;
+  box-sizing: border-box;
+  min-width: 0;
+  transition: border-color 0.15s;
+}
+.folder-input:focus {
+  border-color: #1b1b1f;
+}
+
+.folder-browse-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #e5e7eb;
+  border-radius: 2px;
+  background: #fafafa;
+  color: #9ca3af;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  padding: 0;
+}
+.folder-browse-btn:hover {
+  border-color: #1b1b1f;
+  color: #1b1b1f;
+  background: #f3f4f6;
+}
+
 .path-text {
   font-size: 13px;
   color: #1b1b1f;

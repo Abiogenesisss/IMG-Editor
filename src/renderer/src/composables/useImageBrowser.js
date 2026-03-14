@@ -105,9 +105,7 @@ export function useImageBrowser(options = {}) {
   }
 
   // --- 文件夹选择 ---
-  async function chooseInputFolder() {
-    const folder = await window.api.selectFolder()
-    if (!folder) return
+  async function loadInputFolder(folder) {
     inputFolder.value = folder
     const list = await window.api.readImages(folder)
     images.value = list
@@ -116,7 +114,12 @@ export function useImageBrowser(options = {}) {
     thumbnails.value = {}
     thumbLoadOrder.length = 0
     loadQueue.length = 0
-    // 缩略图由 IntersectionObserver 按需触发，无需主动全量加载
+  }
+
+  async function chooseInputFolder() {
+    const folder = await window.api.selectFolder()
+    if (!folder) return
+    await loadInputFolder(folder)
   }
 
   async function chooseOutputFolder() {
@@ -290,6 +293,7 @@ export function useImageBrowser(options = {}) {
     getTargetFiles,
     chooseInputFolder,
     chooseOutputFolder,
+    loadInputFolder,
     toggleSelect,
     toggleSelectAll,
     isSelected,

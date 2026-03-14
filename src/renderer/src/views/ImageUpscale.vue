@@ -15,6 +15,7 @@ const {
   selectedCount,
   chooseInputFolder,
   chooseOutputFolder,
+  loadInputFolder,
   toggleSelect,
   toggleSelectAll,
   isSelected,
@@ -260,18 +261,23 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
       <div class="folder-section">
         <div class="folder-row">
           <span class="folder-label">输入</span>
-          <div class="folder-path" @click="chooseInputFolder">
-            <span v-if="inputFolder" class="path-text">{{ inputFolder }}</span>
-            <span v-else class="path-placeholder">点击选择文件夹...</span>
-          </div>
+          <input
+            class="folder-input"
+            :value="inputFolder"
+            placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
+            @change="e => e.target.value.trim() && loadInputFolder(e.target.value.trim())"
+          />
+          <button class="folder-browse-btn" @click="chooseInputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
         </div>
         <div class="folder-row">
           <span class="folder-label">输出</span>
-          <div class="folder-path" @click="chooseOutputFolder">
-            <span v-if="outputFolder" class="path-text">{{ outputFolder }}</span>
-            <span v-else-if="inputFolder" class="path-text path-default">同级自动创建输出目录</span>
-            <span v-else class="path-placeholder">点击选择文件夹...</span>
-          </div>
+          <input
+            class="folder-input"
+            :value="outputFolder"
+            :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
+            @change="e => outputFolder = e.target.value.trim()"
+          />
+          <button class="folder-browse-btn" @click="chooseOutputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
         </div>
       </div>
       <div class="action-section">
@@ -367,20 +373,6 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
                 </div>
               </div>
             </template>
-            <!-- 预览模式 -->
-            <div class="panel-section">
-              <span class="panel-label">预览模式</span>
-              <div class="panel-row format-options">
-                <label
-                  v-for="opt in previewModes"
-                  :key="opt.value"
-                  :class="['format-tag', { selected: previewMode === opt.value }]"
-                  @click="previewMode = opt.value"
-                >
-                  {{ opt.label }}
-                </label>
-              </div>
-            </div>
           </div>
         </div>
         <!-- 预览按钮 -->
@@ -400,6 +392,19 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
           {{ processingAction === 'upscale' ? '处理中...' : '执行超分' }}
         </button>
       </div>
+    </div>
+
+    <!-- 预览模式栏 -->
+    <div class="preview-mode-bar">
+      <span class="preview-mode-label">预览模式</span>
+      <label
+        v-for="opt in previewModes"
+        :key="opt.value"
+        :class="['preview-mode-tag', { active: previewMode === opt.value }]"
+        @click="previewMode = opt.value"
+      >
+        {{ opt.label }}
+      </label>
     </div>
 
     <!-- 状态栏 -->
@@ -543,6 +548,18 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
             </div>
           </div>
 
+          <!-- 预览模式切换 -->
+          <div class="preview-mode-float">
+            <label
+              v-for="opt in previewModes"
+              :key="opt.value"
+              :class="['preview-mode-tag', { active: previewMode === opt.value }]"
+              @click="previewMode = opt.value"
+            >
+              {{ opt.label }}
+            </label>
+          </div>
+
           <!-- 关闭按钮 -->
           <button class="preview-close-btn" @click="closeUpscalePreview">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -679,6 +696,75 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
 .upscale-run-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* ===== 预览模式栏（工具栏下方独立行） ===== */
+.preview-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.preview-mode-label {
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.preview-mode-tag {
+  padding: 4px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 2px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+  background: #fff;
+}
+
+.preview-mode-tag:hover {
+  border-color: #b0b0b0;
+}
+
+.preview-mode-tag.active {
+  background: #1b1b1f;
+  border-color: #1b1b1f;
+  color: #fff;
+}
+
+/* ===== 预览遮罩内浮动模式切换 ===== */
+.preview-mode-float {
+  position: absolute;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px 8px;
+  border-radius: 6px;
+  z-index: 10;
+}
+
+.preview-mode-float .preview-mode-tag {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.preview-mode-float .preview-mode-tag:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  color: #fff;
+}
+
+.preview-mode-float .preview-mode-tag.active {
+  background: #fff;
+  border-color: #fff;
+  color: #1b1b1f;
 }
 
 /* ============================

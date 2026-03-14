@@ -18,6 +18,7 @@ const {
   getTargetFiles,
   chooseInputFolder,
   chooseOutputFolder,
+  loadInputFolder,
   toggleSelect,
   toggleSelectAll,
   isSelected,
@@ -89,6 +90,7 @@ function selectModel(key) {
 // ===================== 打标参数 =====================
 const generalThreshold = ref(0.35)
 const characterThreshold = ref(0.85)
+const replaceUnderscore = ref(true)
 
 // ===================== 标签数据 =====================
 const tagsMap = ref({})
@@ -118,25 +120,38 @@ onBeforeUnmount(() => {
 watch(imageCount, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
 
 // ===================== 批量打标 =====================
+const tagError = ref('')
+
 async function runTag() {
   const model = currentModelInfo.value
   if (!model || !model.downloaded) return
   const files = getTargetFiles()
   if (files.length === 0) return
   processingAction.value = 'tag'
+  tagError.value = ''
   try {
     const result = await window.api.taggerTag(files, selectedModel.value, generalThreshold.value, characterThreshold.value)
     if (result.aborted) return
     if (result.success) {
       const newMap = { ...tagsMap.value }
-      for (const item of result.results) { if (item.ok) newMap[item.file] = item.tag_string }
+      for (const item of result.results) {
+            if (item.ok) {
+              newMap[item.file] = replaceUnderscore.value
+                ? item.tag_string.replace(/_/g, ' ')
+                : item.tag_string
+            }
+          }
       tagsMap.value = newMap
       dirtySet.value = new Set(files.filter((f) => {
         const r = result.results.find((x) => x.file === f)
         return r && r.ok
       }))
       showTagPanel.value = true
+    } else {
+      tagError.value = result.error || '打标失败，请检查模型或图片'
     }
+  } catch (err) {
+    tagError.value = err.message || '打标请求异常'
   } finally { if (processingAction.value === 'tag') processingAction.value = null }
 }
 
@@ -362,18 +377,23 @@ const showTagPanel = ref(true)
       <div class="folder-section">
         <div class="folder-row">
           <span class="folder-label">输入</span>
-          <div class="folder-path" @click="chooseInputFolder">
-            <span v-if="inputFolder" class="path-text">{{ inputFolder }}</span>
-            <span v-else class="path-placeholder">点击选择文件夹...</span>
-          </div>
+          <input
+            class="folder-input"
+            :value="inputFolder"
+            placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
+            @change="e => e.target.value.trim() && loadInputFolder(e.target.value.trim())"
+          />
+          <button class="folder-browse-btn" @click="chooseInputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
         </div>
         <div class="folder-row">
           <span class="folder-label">输出</span>
-          <div class="folder-path" @click="chooseOutputFolder">
-            <span v-if="outputFolder" class="path-text">{{ outputFolder }}</span>
-            <span v-else-if="inputFolder" class="path-text path-default">标签保存在图片同目录</span>
-            <span v-else class="path-placeholder">点击选择文件夹...</span>
-          </div>
+          <input
+            class="folder-input"
+            :value="outputFolder"
+            :placeholder="inputFolder ? '标签保存在图片同目录' : '输入文件夹路径...'"
+            @change="e => outputFolder = e.target.value.trim()"
+          />
+          <button class="folder-browse-btn" @click="chooseOutputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
         </div>
       </div>
       <div class="action-section">
@@ -407,7 +427,7 @@ const showTagPanel = ref(true)
     </div>
 
     <!-- 阈值设置栏 -->
-    <div v-if="currentModelInfo?.downloaded" class="threshold-bar">
+    <div class="threshold-bar">
       <div class="threshold-item">
         <span class="threshold-label">通用阈值</span>
         <input type="range" min="0.05" max="0.95" step="0.05" v-model.number="generalThreshold" :disabled="!!processingAction" />
@@ -418,6 +438,16 @@ const showTagPanel = ref(true)
         <input type="range" min="0.05" max="0.95" step="0.05" v-model.number="characterThreshold" :disabled="!!processingAction" />
         <span class="threshold-value">{{ characterThreshold.toFixed(2) }}</span>
       </div>
+      <label class="threshold-toggle" @click="replaceUnderscore = !replaceUnderscore">
+        <span :class="['toggle-switch', { on: replaceUnderscore }]"><span class="toggle-knob"></span></span>
+        <span class="toggle-text">下划线转空格</span>
+      </label>
+    </div>
+
+    <!-- 错误提示 -->
+    <div v-if="tagError" class="tag-error-bar">
+      <span>{{ tagError }}</span>
+      <button class="tag-error-close" @click="tagError = ''">×</button>
     </div>
 
     <!-- 状态栏 -->
@@ -620,12 +650,63 @@ const showTagPanel = ref(true)
 </template>
 
 <style scoped>
+/* ===== 错误提示条 ===== */
+.tag-error-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #dc2626;
+  flex-shrink: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.tag-error-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: #dc2626;
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
 /* ===== 阈值栏 ===== */
 .threshold-bar { display: flex; gap: 24px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; flex-shrink: 0; }
 .threshold-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .threshold-label { color: #6b7280; white-space: nowrap; width: 56px; flex-shrink: 0; }
 .threshold-item input[type="range"] { width: 120px; height: 4px; accent-color: #1b1b1f; cursor: pointer; }
 .threshold-value { font-size: 12px; color: #1b1b1f; font-weight: 500; min-width: 32px; text-align: right; }
+.threshold-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; flex-shrink: 0; }
+.toggle-text { font-size: 12px; color: #6b7280; white-space: nowrap; transition: color 0.15s; }
+.threshold-toggle:hover .toggle-text { color: #1b1b1f; }
+.toggle-switch {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: #d1d5db;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle-switch.on { background: #1b1b1f; }
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s;
+}
+.toggle-switch.on .toggle-knob { transform: translateX(14px); }
 
 /* ===== 模型选择 ===== */
 .model-select-wrap { display: flex; align-items: center; gap: 6px; }

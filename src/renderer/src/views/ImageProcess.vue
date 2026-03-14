@@ -14,6 +14,7 @@ const {
   getTargetFiles,
   chooseInputFolder,
   chooseOutputFolder,
+  loadInputFolder,
   toggleSelect,
   toggleSelectAll,
   isSelected,
@@ -336,18 +337,23 @@ async function refreshAndClearAll() {
       <div class="folder-section">
         <div class="folder-row">
           <span class="folder-label">输入</span>
-          <div class="folder-path" @click="chooseInputFolder">
-            <span v-if="inputFolder" class="path-text">{{ inputFolder }}</span>
-            <span v-else class="path-placeholder">点击选择文件夹...</span>
-          </div>
+          <input
+            class="folder-input"
+            :value="inputFolder"
+            placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
+            @change="e => e.target.value.trim() && loadInputFolder(e.target.value.trim())"
+          />
+          <button class="folder-browse-btn" @click="chooseInputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
         </div>
         <div class="folder-row">
           <span class="folder-label">输出</span>
-          <div class="folder-path" @click="chooseOutputFolder">
-            <span v-if="outputFolder" class="path-text">{{ outputFolder }}</span>
-            <span v-else-if="inputFolder" class="path-text path-default">同级自动创建输出目录</span>
-            <span v-else class="path-placeholder">点击选择文件夹...</span>
-          </div>
+          <input
+            class="folder-input"
+            :value="outputFolder"
+            :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
+            @change="e => outputFolder = e.target.value.trim()"
+          />
+          <button class="folder-browse-btn" @click="chooseOutputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
         </div>
       </div>
       <div class="action-section">

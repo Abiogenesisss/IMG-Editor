@@ -497,19 +497,23 @@ class Handler(BaseHTTPRequestHandler):
 
         self._begin_sse()
 
-        results = tag_batch(
-            files, model_key,
-            general_threshold=general_threshold,
-            character_threshold=character_threshold,
-            progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t})
-        )
-        ok_count = sum(1 for r in results if r.get("ok"))
-        self._send_event("done", {
-            "success": True,
-            "processed": ok_count,
-            "total": len(files),
-            "results": results,
-        })
+        try:
+            results = tag_batch(
+                files, model_key,
+                general_threshold=general_threshold,
+                character_threshold=character_threshold,
+                progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t})
+            )
+            ok_count = sum(1 for r in results if r.get("ok"))
+            self._send_event("done", {
+                "success": True,
+                "processed": ok_count,
+                "total": len(files),
+                "results": results,
+            })
+        except Exception:
+            tb = traceback.format_exc()
+            self._send_event("done", {"success": False, "error": tb})
 
     # ---- 超分辨率: 批量处理（GPU 顺序执行，不走进程池）----
     def _upscale(self):
