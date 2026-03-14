@@ -1,0 +1,12 @@
+node_modules
+dist
+out
+.DS_Store
+.eslintcache
+*.log*
+__pycache__
+python_backend/python_embed
+python_backend/models
+python_backend/waifu2x/pretrained_models
+python_backend/nunif/modules/_alex11.pth
+.vs

@@ -1,0 +1,105 @@
+appId: com.electron.app
+productName: img-editor
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!python_backend'
+  - '!scripts'
+  # 排除 node_modules 中运行时不需要的包（构建工具、编译器等）
+  - '!node_modules/@babel'
+  - '!node_modules/@jridgewell'
+  - '!node_modules/@vue/compiler-core'
+  - '!node_modules/@vue/compiler-dom'
+  - '!node_modules/@vue/compiler-sfc'
+  - '!node_modules/@vue/compiler-ssr'
+  - '!node_modules/@vue/devtools-api'
+  - '!node_modules/@vue/devtools-kit'
+  - '!node_modules/@vue/devtools-shared'
+  - '!node_modules/@vue-macros'
+  - '!node_modules/acorn'
+  - '!node_modules/ast-kit'
+  - '!node_modules/ast-walker-scope'
+  - '!node_modules/birpc'
+  - '!node_modules/chokidar'
+  - '!node_modules/confbox'
+  - '!node_modules/entities'
+  - '!node_modules/estree-walker'
+  - '!node_modules/exsolve'
+  - '!node_modules/fdir'
+  - '!node_modules/hookable'
+  - '!node_modules/jsesc'
+  - '!node_modules/json5'
+  - '!node_modules/local-pkg'
+  - '!node_modules/magic-string'
+  - '!node_modules/magic-string-ast'
+  - '!node_modules/mlly'
+  - '!node_modules/muggle-string'
+  - '!node_modules/nanoid'
+  - '!node_modules/pathe'
+  - '!node_modules/perfect-debounce'
+  - '!node_modules/picocolors'
+  - '!node_modules/picomatch'
+  - '!node_modules/pkg-types'
+  - '!node_modules/postcss'
+  - '!node_modules/quansync'
+  - '!node_modules/readdirp'
+  - '!node_modules/scule'
+  - '!node_modules/source-map-js'
+  - '!node_modules/tinyglobby'
+  - '!node_modules/ufo'
+  - '!node_modules/unplugin'
+  - '!node_modules/unplugin-utils'
+  - '!node_modules/webpack-virtual-modules'
+  - '!node_modules/yaml'
+  # 排除 .map 文件和 TypeScript 源码
+  - '!**/*.map'
+  - '!**/*.ts'
+  - '!**/LICENSE*'
+  - '!**/CHANGELOG*'
+extraResources:
+  - from: python_backend
+    to: python_backend
+    filter:
+      - '**/*'
+      - '!__pycache__'
+      - '!**/__pycache__'
+asarUnpack:
+  - resources/**
+win:
+  executableName: img-editor
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSCameraUsageDescription: Application requests access to the device's camera.
+    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+  notarize: false
+dmg:
+  artifactName: ${name}-${version}.${ext}
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+  maintainer: electronjs.org
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
+publish:
+  provider: github
+  owner: Abiogenesisss
+  repo: Koishi_IMG-Editor
