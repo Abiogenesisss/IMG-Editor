@@ -1,6 +1,8 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
+import FolderRow from '../components/FolderRow.vue'
+import ImageStatusBar from '../components/ImageStatusBar.vue'
 
 const {
   inputFolder,
@@ -15,6 +17,7 @@ const {
   chooseInputFolder,
   chooseOutputFolder,
   loadInputFolder,
+  clearCurrentFolder,
   toggleSelect,
   toggleSelectAll,
   isSelected,
@@ -34,10 +37,26 @@ const {
 
 const gridRef = ref(null)
 onMounted(() => { if (gridRef.value) observeGrid(gridRef.value) })
-watch(imageCount, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
+watch(() => images.value, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
 
 // --- 面板控制 ---
 const activePanel = ref(null)
+const processError = ref('')
+
+const ACTION_LABELS = {
+  filter: '分辨率过滤',
+  convert: '格式转换',
+  alpha: '透明通道转换',
+  crop: '比例裁剪',
+  dedup: '去重',
+  cluster: '聚类',
+  clusterMove: '整理聚类结果',
+}
+
+const processingLabel = computed(() => {
+  if (!processingAction.value) return ''
+  return ACTION_LABELS[processingAction.value] || '处理中'
+})
 
 function togglePanel(name) {
   activePanel.value = activePanel.value === name ? null : name
@@ -47,17 +66,33 @@ function closePanel() {
   activePanel.value = null
 }
 
+function setProcessError(error, actionName) {
+  if (!error) return
+  if (typeof error === 'string') {
+    processError.value = error
+    return
+  }
+  processError.value = error.error || error.message || `${ACTION_LABELS[actionName] || '处理'}失败`
+}
+
 // --- 通用任务执行器（需要输出目录的任务） ---
 async function runOutputTask(actionName, apiFn) {
   activePanel.value = null
+  processError.value = ''
   const outDir = await getOutputDir()
   processingAction.value = actionName
   try {
     const result = await apiFn(outDir)
     if (result.aborted) return
-    if (result.success && outDir === inputFolder.value) {
+    if (!result.success) {
+      setProcessError(result, actionName)
+      return
+    }
+    if (outDir === inputFolder.value) {
       await refreshImages()
     }
+  } catch (err) {
+    setProcessError(err, actionName)
   } finally {
     if (processingAction.value === actionName) processingAction.value = null
   }
@@ -72,6 +107,7 @@ const filterActive = ref(false)
 
 async function runResolutionFilter() {
   activePanel.value = null
+  processError.value = ''
   clearDedup()
   clearCluster()
   const files = getTargetFiles()
@@ -82,7 +118,9 @@ async function runResolutionFilter() {
 
   processingAction.value = 'filter'
   try {
-    const result = await window.api.resolutionFilter(files, minW, 0, minH, 0)
+    const result = await window.api.callPython('/resolution-filter', {
+      files: files, min_width: minW, max_width: 0, min_height: minH, max_height: 0
+    })
     if (result.aborted) return
     if (result.success) {
       const map = new Map()
@@ -93,7 +131,11 @@ async function runResolutionFilter() {
       }
       filterMap.value = map
       filterActive.value = true
+    } else {
+      setProcessError(result, 'filter')
     }
+  } catch (err) {
+    setProcessError(err, 'filter')
   } finally {
     if (processingAction.value === 'filter') processingAction.value = null
   }
@@ -109,7 +151,20 @@ const targetFormat = ref('png')
 
 function runFormatConvert() {
   runOutputTask('convert', (outDir) =>
-    window.api.formatConvert([...selectedImages.value], outDir, targetFormat.value)
+    window.api.callPython('/format-convert', {
+      files: [...selectedImages.value], output_dir: outDir, target_format: targetFormat.value
+    })
+  )
+}
+
+// --- 透明通道转换 ---
+const alphaBackground = ref('white')
+
+function runAlphaFlatten() {
+  runOutputTask('alpha', (outDir) =>
+    window.api.callPython('/flatten-alpha', {
+      files: getTargetFiles(), output_dir: outDir, background: alphaBackground.value
+    })
   )
 }
 
@@ -147,9 +202,13 @@ function runProportionalCrop() {
   runOutputTask('crop', (outDir) => {
     if (cropAuto.value) {
       const ratioList = cropPresets.map((p) => [p.w, p.h])
-      return window.api.autoCrop([...selectedImages.value], outDir, ratioList)
+      return window.api.callPython('/auto-crop', {
+        files: [...selectedImages.value], output_dir: outDir, ratio_list: ratioList
+      })
     }
-    return window.api.proportionalCrop([...selectedImages.value], outDir, cropRatioW.value, cropRatioH.value)
+    return window.api.callPython('/proportional-crop', {
+      files: [...selectedImages.value], output_dir: outDir, ratio_w: cropRatioW.value, ratio_h: cropRatioH.value
+    })
   })
 }
 
@@ -170,7 +229,7 @@ function getGroupColor(groupId) {
 // --- 聚类 ---
 const clusterMethod = ref('style')
 const clusterAlgorithm = ref('kmeans')
-const clusterK = ref(6)
+const clusterK = ref(8)
 const clusterMap = ref(new Map()) // file path → group number
 const clusterActive = ref(false)
 const clusterFusion = ref(false)
@@ -234,6 +293,7 @@ const sortedImages = computed(() => {
 
 async function deduplicate() {
   activePanel.value = null
+  processError.value = ''
   clearFilter()
   clearCluster()
   const files = getTargetFiles()
@@ -241,7 +301,9 @@ async function deduplicate() {
 
   processingAction.value = 'dedup'
   try {
-    const result = await window.api.deduplicate(files, dedupHashThresh.value, dedupPhashThresh.value, dedupColorThresh.value)
+    const result = await window.api.callPython('/deduplicate', {
+      files: files, hash_thresh: dedupHashThresh.value, phash_thresh: dedupPhashThresh.value, color_thresh: dedupColorThresh.value
+    })
     if (result.aborted) return
     if (result.success) {
       const map = new Map()
@@ -250,7 +312,11 @@ async function deduplicate() {
       }
       dedupMap.value = map
       dedupActive.value = true
+    } else {
+      setProcessError(result, 'dedup')
     }
+  } catch (err) {
+    setProcessError(err, 'dedup')
   } finally {
     if (processingAction.value === 'dedup') processingAction.value = null
   }
@@ -258,6 +324,7 @@ async function deduplicate() {
 
 async function runCluster() {
   activePanel.value = null
+  processError.value = ''
   clearFilter()
   clearDedup()
   const files = getTargetFiles()
@@ -273,7 +340,13 @@ async function runCluster() {
         ? { style: clusterFusionStyle.value, semantic: clusterFusionSemantic.value, color: clusterFusionColor.value }
         : null,
     }
-    const result = await window.api.cluster(files, options)
+    const result = await window.api.callPython('/cluster', {
+      files: files,
+      method: options.method || 'style',
+      algorithm: options.algorithm || 'kmeans',
+      k: options.k || 5,
+      fusion_weights: options.fusionWeights || null,
+    })
     if (result.aborted) return
     if (result.success) {
       const map = new Map()
@@ -282,13 +355,18 @@ async function runCluster() {
       }
       clusterMap.value = map
       clusterActive.value = true
+    } else {
+      setProcessError(result, 'cluster')
     }
+  } catch (err) {
+    setProcessError(err, 'cluster')
   } finally {
     if (processingAction.value === 'cluster') processingAction.value = null
   }
 }
 
 async function moveClusterResults() {
+  processError.value = ''
   const outDir = await getOutputDir()
   if (!outDir) return
 
@@ -300,10 +378,16 @@ async function moveClusterResults() {
 
   processingAction.value = 'clusterMove'
   try {
-    const result = await window.api.clusterMove(filesByGroup, outDir)
+    const result = await window.api.callPython('/cluster-move', {
+      files_by_group: filesByGroup, output_dir: outDir
+    })
     if (result.success) {
       clearCluster()
+    } else {
+      setProcessError(result, 'clusterMove')
     }
+  } catch (err) {
+    setProcessError(err, 'clusterMove')
   } finally {
     if (processingAction.value === 'clusterMove') processingAction.value = null
   }
@@ -325,6 +409,15 @@ async function refreshAndClearAll() {
   clearCluster()
   await refreshImages()
 }
+
+function clearProcessFolder() {
+  activePanel.value = null
+  processError.value = ''
+  clearFilter()
+  clearDedup()
+  clearCluster()
+  clearCurrentFolder()
+}
 </script>
 
 <template>
@@ -335,26 +428,20 @@ async function refreshAndClearAll() {
     <!-- 顶部：文件夹选择 + 操作按钮 -->
     <div class="process-toolbar">
       <div class="folder-section">
-        <div class="folder-row">
-          <span class="folder-label">输入</span>
-          <input
-            class="folder-input"
-            :value="inputFolder"
-            placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
-            @change="e => e.target.value.trim() && loadInputFolder(e.target.value.trim())"
-          />
-          <button class="folder-browse-btn" @click="chooseInputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
-        </div>
-        <div class="folder-row">
-          <span class="folder-label">输出</span>
-          <input
-            class="folder-input"
-            :value="outputFolder"
-            :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
-            @change="e => outputFolder = e.target.value.trim()"
-          />
-          <button class="folder-browse-btn" @click="chooseOutputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
-        </div>
+        <FolderRow
+          v-model="inputFolder"
+          label="输入"
+          placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
+          @commit="path => path && loadInputFolder(path)"
+          @browse="chooseInputFolder"
+        />
+        <FolderRow
+          v-model="outputFolder"
+          label="输出"
+          :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
+          @commit="path => { outputFolder = path }"
+          @browse="chooseOutputFolder"
+        />
       </div>
       <div class="action-section">
         <div class="action-item">
@@ -421,6 +508,33 @@ async function refreshAndClearAll() {
               </label>
             </div>
             <button class="panel-run" @click="runFormatConvert">执行</button>
+          </div>
+        </div>
+        <div class="action-item">
+          <button
+            :class="['action-btn', { active: activePanel === 'alpha' }]"
+            :disabled="imageCount === 0 || !!processingAction"
+            @click="togglePanel('alpha')"
+          >
+            透明通道
+          </button>
+          <div v-if="activePanel === 'alpha'" class="action-panel alpha-panel">
+            <div class="panel-hint">合成透明背景图片；无透明通道的图片会自动跳过</div>
+            <div class="panel-row format-options">
+              <label
+                :class="['format-tag', { selected: alphaBackground === 'white' }]"
+                @click="alphaBackground = 'white'"
+              >
+                白底
+              </label>
+              <label
+                :class="['format-tag', { selected: alphaBackground === 'black' }]"
+                @click="alphaBackground = 'black'"
+              >
+                黑底
+              </label>
+            </div>
+            <button class="panel-run" @click="runAlphaFlatten">执行</button>
           </div>
         </div>
         <div class="action-item">
@@ -585,52 +699,38 @@ async function refreshAndClearAll() {
       </div>
     </div>
 
-    <!-- 状态栏 -->
-    <div v-if="imageCount > 0" class="status-bar">
-      <label class="select-all-label" @click="toggleSelectAll">
-        <span :class="['checkbox', { checked: selectAll }]"></span>
-        全选
-      </label>
-      <div class="bar-btn-group">
-        <button :class="['bar-icon-btn', { spinning: refreshing }]" title="刷新" @click="refreshAndClearAll">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <polyline points="1 20 1 14 7 14"></polyline>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
-            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
-          </svg>
-        </button>
-        <button class="bar-icon-btn delete" title="删除选中图片" :disabled="selectedCount === 0" @click="deleteSelected">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
-            <path d="M10 11v6"></path>
-            <path d="M14 11v6"></path>
-          </svg>
-        </button>
-      </div>
-      <span v-if="processingAction && progressTotal > 0" class="status-progress">
-        <span class="progress-bar-track">
-          <span class="progress-bar-fill" :style="{ width: (progressDone / progressTotal * 100) + '%' }"></span>
-        </span>
-        <span class="progress-text">{{ progressDone }} / {{ progressTotal }}</span>
-        <button class="abort-btn" title="终止任务" @click="abortTask">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </span>
-      <span v-else class="status-text">共 {{ imageCount }} 张，已选 {{ selectedCount }} 张</span>
-      <button
-        v-if="clusterActive"
-        class="action-btn"
-        :disabled="!!processingAction"
-        @click="moveClusterResults"
-      >
-        移动到子文件夹
-      </button>
+    <div v-if="processError" class="task-error-bar">
+      <span>{{ processError }}</span>
+      <button class="task-error-close" @click="processError = ''">关闭</button>
     </div>
+
+    <!-- 状态栏 -->
+    <ImageStatusBar
+      :image-count="imageCount"
+      :selected-count="selectedCount"
+      :select-all="selectAll"
+      :refreshing="refreshing"
+      :processing-action="processingAction"
+      :progress-done="progressDone"
+      :progress-total="progressTotal"
+      :processing-label="processingLabel"
+      @toggle-select-all="toggleSelectAll"
+      @refresh="refreshAndClearAll"
+      @clear-folder="clearProcessFolder"
+      @delete-selected="deleteSelected"
+      @abort="abortTask"
+    >
+      <template #tail>
+        <button
+          v-if="clusterActive"
+          class="action-btn"
+          :disabled="!!processingAction"
+          @click="moveClusterResults"
+        >
+          移动到子文件夹
+        </button>
+      </template>
+    </ImageStatusBar>
 
     <!-- 图片网格 -->
     <div v-if="imageCount > 0" ref="gridRef" class="image-grid">
@@ -731,11 +831,16 @@ async function refreshAndClearAll() {
   min-width: 240px;
 }
 
+.alpha-panel {
+  min-width: 220px;
+}
+
 .panel-hint {
   font-size: 11px;
   color: #9ca3af;
   line-height: 1.4;
 }
+
 
 .cluster-panel .format-tag {
   flex: 1;
@@ -752,6 +857,33 @@ async function refreshAndClearAll() {
   font-size: 11px;
   color: #9ca3af;
   flex-shrink: 0;
+}
+
+.task-error-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin: 8px 0 0;
+  border-radius: 8px;
+  background: var(--color-error-light);
+  border: 1px solid var(--color-error-border);
+  color: var(--color-error);
+  font-size: 13px;
+}
+
+.task-error-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.status-pending {
+  font-weight: 500;
 }
 
 /* 去重徽章 */

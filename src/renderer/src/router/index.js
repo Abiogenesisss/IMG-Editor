@@ -29,6 +29,21 @@ const routes = [
     path: '/tagger',
     name: 'ImageTagger',
     component: () => import('../views/ImageTagger.vue')
+  },
+  {
+    path: '/caption',
+    name: 'ImageCaption',
+    component: () => import('../views/ImageCaption.vue')
+  },
+  {
+    path: '/workflow',
+    name: 'WorkflowCanvas',
+    component: () => import('../views/WorkflowCanvas.vue')
+  },
+  {
+    path: '/settings',
+    name: 'Settings',
+    component: () => import('../views/Settings.vue')
   }
 ]
 

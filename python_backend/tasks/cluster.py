@@ -1,4 +1,4 @@
-"""图片聚类：CSD 风格特征 / 颜色直方图 + MiniBatchKMeans（含融合、增量聚类）"""
+"""Image clustering helpers for style, semantic, and fusion features."""
 
 import os
 import shutil
@@ -9,10 +9,10 @@ _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DEFAULT_MODEL_PATH = os.path.join(_BACKEND_DIR, "models", "csd_clip_model.onnx")
 
 
-# ==================== 颜色直方图特征 ====================
+# ==================== Color histogram features ====================
 
 def extract_color_one(file_path):
-    """提取单张图片的 HSV 颜色直方图特征（64维，L2 归一化）"""
+    """Extract HSV color histogram features from one image."""
     try:
         img = Image.open(file_path).convert("RGB")
         img = img.resize((128, 128))
@@ -29,13 +29,13 @@ def extract_color_one(file_path):
         return {"file": file_path, "ok": False, "error": str(e)}
 
 
-# ==================== CSD 风格特征（ONNX 轻量推理） ====================
+# ==================== CSD style / semantic features ====================
 
 _csd_session = None
 
 
 def cleanup_cache():
-    """释放缓存的 CSD CLIP 模型"""
+    """Release cached CSD models."""
     global _csd_session
     _csd_session = None
 
@@ -44,9 +44,28 @@ _CLIP_MEAN = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32).res
 _CLIP_STD = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32).reshape(3, 1, 1)
 
 
+def _get_session_input_dtype(session):
+    """Choose numpy dtype based on the ONNX model input declaration."""
+    input_type = session.get_inputs()[0].type
+    if input_type == "tensor(float16)":
+        return np.float16
+    if input_type == "tensor(float)":
+        return np.float32
+    raise RuntimeError(f"unsupported CSD input type: {input_type}")
+
+
+def _l2_normalize_rows(features):
+    """L2-normalize row-wise to reduce provider / precision drift."""
+    features = np.asarray(features, dtype=np.float32)
+    if features.ndim == 1:
+        features = features.reshape(1, -1)
+    norms = np.linalg.norm(features, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    return features / norms
+
+
 def _preprocess_image(img):
-    """CLIP ViT-L/14 预处理（纯 PIL + numpy，无 torch 依赖）"""
-    # Resize：短边缩放到 224，保持长宽比，BICUBIC 插值
+    """CLIP ViT-L/14 preprocessing with PIL + numpy only."""
     w, h = img.size
     if w <= h:
         new_w, new_h = 224, int(h * 224 / w)
@@ -54,21 +73,19 @@ def _preprocess_image(img):
         new_w, new_h = int(w * 224 / h), 224
     img = img.resize((new_w, new_h), Image.BICUBIC)
 
-    # CenterCrop 224×224
     w, h = img.size
     left = (w - 224) // 2
     top = (h - 224) // 2
     img = img.crop((left, top, left + 224, top + 224))
 
-    # HWC uint8 → CHW float32 [0,1] → CLIP 标准化
     arr = np.array(img, dtype=np.float32) / 255.0
-    arr = arr.transpose(2, 0, 1)  # HWC → CHW
+    arr = arr.transpose(2, 0, 1)
     arr = (arr - _CLIP_MEAN) / _CLIP_STD
     return arr
 
 
 def _load_csd(model_path=None):
-    """加载 CSD ONNX 模型（本地文件优先，HuggingFace 兜底）"""
+    """Load the ONNX CSD model."""
     global _csd_session
     if _csd_session is not None:
         return _csd_session
@@ -76,26 +93,30 @@ def _load_csd(model_path=None):
     import onnxruntime as ort
 
     onnx_path = model_path or _DEFAULT_MODEL_PATH
+    if model_path and not model_path.lower().endswith(".onnx"):
+        raise RuntimeError(f"unsupported cluster model format: {model_path}")
     if not os.path.isfile(onnx_path):
         raise RuntimeError(
-            f"找不到 CSD ONNX 模型：{onnx_path}\n"
-            "请将 csd_clip_model.onnx 放入 python_backend/models/ 目录"
+            f"cannot find CSD ONNX model: {onnx_path}\n"
+            "please place csd_clip_model.onnx in python_backend/models/"
         )
 
-    available = ort.get_available_providers()
-    providers = []
-    if "CUDAExecutionProvider" in available:
-        providers.append("CUDAExecutionProvider")
-    providers.append("CPUExecutionProvider")
-
-    _csd_session = ort.InferenceSession(onnx_path, providers=providers)
+    # Clustering stays on CPU to avoid fp16 CUDA drift changing group assignments.
+    _csd_session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
     return _csd_session
 
 
-def extract_style_batch(files, model_path=None, batch_size=16, progress_cb=None):
-    """批量提取 CSD 风格特征（ONNX 推理，无 torch 依赖）"""
+def _extract_clip_feats(outputs):
+    clip_feats = outputs[0].astype(np.float32)
+    norms = np.linalg.norm(clip_feats, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    return clip_feats / norms
+
+
+def _extract_csd_batch(files, model_path=None, batch_size=16, progress_cb=None, feature_fn=None):
     session = _load_csd(model_path)
     input_name = session.get_inputs()[0].name
+    input_dtype = _get_session_input_dtype(session)
     total = len(files)
     results = [None] * total
     done = 0
@@ -114,79 +135,59 @@ def extract_style_batch(files, model_path=None, batch_size=16, progress_cb=None)
                 results[i + j] = {"file": f, "ok": False, "error": str(e)}
 
         if arrays:
-            batch = np.stack(arrays).astype(np.float16)
+            batch = np.stack(arrays).astype(input_dtype, copy=False)
             outputs = session.run(None, {input_name: batch})
-            # CSD 输出: [feature, content_output, style_output]
-            style_feats = outputs[2]
+            features = feature_fn(outputs)
             for k, idx in enumerate(indices):
                 results[idx] = {
-                    "file": files[idx], "ok": True,
-                    "feature": style_feats[k].tolist(),
+                    "file": files[idx],
+                    "ok": True,
+                    "feature": features[k].tolist(),
                 }
 
         done += len(batch_files)
         if progress_cb:
             progress_cb(done, total)
 
-    # 补全未处理的项
     for i in range(len(results)):
         if results[i] is None:
             results[i] = {"file": files[i], "ok": False, "error": "unknown error"}
 
     return results
+
+
+def extract_style_batch(files, model_path=None, batch_size=16, progress_cb=None):
+    """Batch-extract CSD style features."""
+    return _extract_csd_batch(
+        files,
+        model_path=model_path,
+        batch_size=batch_size,
+        progress_cb=progress_cb,
+        feature_fn=lambda outputs: _l2_normalize_rows(outputs[2]),
+    )
 
 
 def extract_semantic_batch(files, model_path=None, batch_size=16, progress_cb=None):
-    """批量提取 CLIP 语义特征（完整 CLIP 嵌入，L2 归一化，无 torch 依赖）"""
-    session = _load_csd(model_path)
-    input_name = session.get_inputs()[0].name
-    total = len(files)
-    results = [None] * total
-    done = 0
-
-    for i in range(0, total, batch_size):
-        batch_files = files[i:i + batch_size]
-        arrays = []
-        indices = []
-
-        for j, f in enumerate(batch_files):
-            try:
-                img = Image.open(f).convert("RGB")
-                arrays.append(_preprocess_image(img))
-                indices.append(i + j)
-            except Exception as e:
-                results[i + j] = {"file": f, "ok": False, "error": str(e)}
-
-        if arrays:
-            batch = np.stack(arrays).astype(np.float16)
-            outputs = session.run(None, {input_name: batch})
-            # CSD 输出: [feature, content_output, style_output]
-            # 使用 outputs[0]（完整 CLIP 嵌入）而非 outputs[1]（分离后的 content），语义表征更强
-            clip_feats = outputs[0].astype(np.float32)
-            # L2 归一化
-            norms = np.linalg.norm(clip_feats, axis=1, keepdims=True)
-            norms[norms == 0] = 1
-            clip_feats = clip_feats / norms
-            for k, idx in enumerate(indices):
-                results[idx] = {
-                    "file": files[idx], "ok": True,
-                    "feature": clip_feats[k].tolist(),
-                }
-
-        done += len(batch_files)
-        if progress_cb:
-            progress_cb(done, total)
-
-    for i in range(len(results)):
-        if results[i] is None:
-            results[i] = {"file": files[i], "ok": False, "error": "unknown error"}
-
-    return results
+    """Batch-extract CLIP semantic features."""
+    return _extract_csd_batch(
+        files,
+        model_path=model_path,
+        batch_size=batch_size,
+        progress_cb=progress_cb,
+        feature_fn=_extract_clip_feats,
+    )
 
 
-def extract_fusion_batch(files, model_path=None, batch_size=16, progress_cb=None,
-                         weight_style=0.0, weight_semantic=0.0, weight_color=0.0):
-    """特征融合提取：按权重拼接 style/semantic/color 特征"""
+def extract_fusion_batch(
+    files,
+    model_path=None,
+    batch_size=16,
+    progress_cb=None,
+    weight_style=0.0,
+    weight_semantic=0.0,
+    weight_color=0.0,
+):
+    """Extract fused features by concatenating style/semantic/color vectors."""
     total = len(files)
 
     style_results = None
@@ -216,7 +217,8 @@ def extract_fusion_batch(files, model_path=None, batch_size=16, progress_cb=None
         semantic_results = extract_semantic_batch(files, model_path, batch_size, sub_progress)
         steps_done += total
     if weight_color > 0:
-        from server import run_parallel
+        from tasks.parallel import run_parallel
+
         color_results = run_parallel(extract_color_one, [(f,) for f in files], sub_progress)
         steps_done += total
 
@@ -253,10 +255,10 @@ def extract_fusion_batch(files, model_path=None, batch_size=16, progress_cb=None
     return results
 
 
-# ==================== 聚类算法 ====================
+# ==================== Clustering algorithms ====================
 
 def _build_result(feature_results, valid, labels):
-    """将聚类标签映射回完整结果列表"""
+    """Map cluster labels back to the full result list."""
     label_map = {}
     for (orig_i, _), label in zip(valid, labels):
         label_map[orig_i] = int(label)
@@ -264,80 +266,84 @@ def _build_result(feature_results, valid, labels):
 
 
 def cluster_features(feature_results, algorithm="kmeans", k=5):
-    """对特征向量执行聚类，返回 [{file, group}, ...]
-    algorithm: 'kmeans' 或 'hdbscan'
-    k: KMeans 的分组数；HDBSCAN 时用于推算 min_cluster_size
-    """
+    """Cluster feature vectors and return [{file, group}, ...]."""
     valid = [(i, r) for i, r in enumerate(feature_results) if r.get("ok")]
     if len(valid) == 0:
         return [{"file": r["file"], "group": None} for r in feature_results]
 
-    features = np.array([r["feature"] for _, r in valid])
+    if len(valid) == 1:
+        return _build_result(feature_results, valid, [0])
+
+    features = _l2_normalize_rows([r["feature"] for _, r in valid])
 
     if algorithm == "hdbscan":
         from sklearn.cluster import HDBSCAN
         from sklearn.decomposition import PCA
 
-        # 高维特征（如 768 维 CLIP/CSD）会导致维度灾难，HDBSCAN 密度估计失效，
-        # 需先用 PCA 降维到合理范围
         n_samples, n_dims = features.shape
         pca_target = min(50, n_samples - 1, n_dims)
         if pca_target >= 2 and n_dims > pca_target:
             features = PCA(n_components=pca_target, random_state=42).fit_transform(features)
 
-        # 根据用户期望的分组数推算 min_cluster_size
         min_cs = max(2, n_samples // max(k, 2))
         hdb = HDBSCAN(min_cluster_size=min_cs, min_samples=1)
         raw_labels = hdb.fit_predict(features)
 
-        # 如果 HDBSCAN 全标为噪声，回退到 KMeans 保证结果可用
         if all(lb == -1 for lb in raw_labels):
             from sklearn.cluster import MiniBatchKMeans
-            actual_k = min(k, n_samples)
-            if actual_k < 2:
-                actual_k = min(2, n_samples)
+
+            actual_k = max(2, min(k, n_samples))
             mbk = MiniBatchKMeans(
-                n_clusters=actual_k, n_init=10, random_state=42,
-                batch_size=min(1024, n_samples)
+                n_clusters=actual_k,
+                n_init=10,
+                random_state=42,
+                batch_size=min(1024, n_samples),
             )
             labels = mbk.fit_predict(features)
             return _build_result(feature_results, valid, labels)
 
-        # HDBSCAN 噪声点标签为 -1，映射为 None；int() 避免 numpy.int64 序列化问题
         labels = [int(lb) if lb >= 0 else None for lb in raw_labels]
         label_map = {}
         for (orig_i, _), label in zip(valid, labels):
             label_map[orig_i] = label
         return [{"file": r["file"], "group": label_map.get(i)} for i, r in enumerate(feature_results)]
-    else:
-        from sklearn.cluster import MiniBatchKMeans
 
-        actual_k = min(k, len(valid))
-        if actual_k < 2:
-            actual_k = min(2, len(valid))
+    from sklearn.cluster import MiniBatchKMeans
 
-        n_samples = len(valid)
-        mbk = MiniBatchKMeans(
-            n_clusters=actual_k, n_init=10, random_state=42,
-            batch_size=min(1024, n_samples)
-        )
-        labels = mbk.fit_predict(features)
-        return _build_result(feature_results, valid, labels)
+    actual_k = max(2, min(k, len(valid)))
+    n_samples = len(valid)
+    mbk = MiniBatchKMeans(
+        n_clusters=actual_k,
+        n_init=10,
+        random_state=42,
+        batch_size=min(1024, n_samples),
+    )
+    labels = mbk.fit_predict(features)
+    return _build_result(feature_results, valid, labels)
 
 
-# ==================== 文件按组复制 ====================
+# ==================== Copy clustered files ====================
 
 def copy_files_to_groups(files_by_group, output_dir):
-    """将文件按聚类组复制到子文件夹 group_1/, group_2/...（保留原文件）"""
+    """Copy files into group_1/, group_2/, ... folders."""
     copied = 0
     errors = []
 
     for group_str, files in files_by_group.items():
         group_dir = os.path.join(output_dir, f"group_{int(group_str) + 1}")
         os.makedirs(group_dir, exist_ok=True)
+        seen_names = set()
         for f in files:
             try:
-                dst = os.path.join(group_dir, os.path.basename(f))
+                base = os.path.basename(f)
+                name, ext = os.path.splitext(base)
+                dst_name = base
+                counter = 1
+                while dst_name in seen_names:
+                    dst_name = f"{name}_{counter}{ext}"
+                    counter += 1
+                seen_names.add(dst_name)
+                dst = os.path.join(group_dir, dst_name)
                 shutil.copy2(f, dst)
                 copied += 1
             except Exception as e:

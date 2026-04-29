@@ -1,25 +1,106 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import IconButton from './components/IconButton.vue'
+import { Copy, Minus, Moon, Settings, Square, Sun, X } from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
 
 const activeNav = ref(route.path)
 const isMaximized = ref(false)
+const appVersion = ref('')
+
+// --- 主题 ---
+const theme = ref(localStorage.getItem('app-theme') || 'light') // 'light' | 'dark'
+watch(theme, (val) => {
+  localStorage.setItem('app-theme', val)
+  document.documentElement.setAttribute('data-theme', val)
+}, { immediate: true })
+
+function toggleTheme(event) {
+  const isDark = theme.value === 'dark'
+
+  // 检查浏览器是否支持 View Transitions API
+  const isAppearanceTransition = document.startViewTransition
+      && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  if (!isAppearanceTransition || !event) {
+    theme.value = isDark ? 'light' : 'dark'
+    return
+  }
+
+  // 获取点击位置作为动画圆心
+  const x = event.clientX
+  const y = event.clientY
+  const endRadius = Math.hypot(
+      Math.max(x, innerWidth - x),
+      Math.max(y, innerHeight - y)
+  )
+
+  const transition = document.startViewTransition(async () => {
+    theme.value = isDark ? 'light' : 'dark'
+    await nextTick()
+  })
+
+  transition.ready.then(() => {
+    const clipPath = [
+      `circle(0px at ${x}px ${y}px)`,
+      `circle(${endRadius}px at ${x}px ${y}px)`
+    ]
+
+    document.documentElement.animate(
+        {
+          clipPath: isDark
+              ? [...clipPath].reverse()
+              : clipPath
+        },
+        {
+          duration: 400,
+          easing: 'ease-in-out',
+          fill: 'forwards',
+          pseudoElement: isDark
+              ? '::view-transition-old(root)'
+              : '::view-transition-new(root)'
+        }
+    )
+  })
+}
+
+// --- 设置页面 ---
+function openSettings() {
+  activeNav.value = '/settings'
+  router.push('/settings')
+}
 
 // --- 自动更新 ---
 const updateStatus = ref('') // '', 'available', 'downloading', 'downloaded'
 const updateVersion = ref('')
 const updatePercent = ref(0)
 
-const navItems = [
+const allNavItems = [
   { path: '/grab', label: '图片抓取' },
   { path: '/process', label: '图片处理' },
   { path: '/augment', label: '数据增强' },
   { path: '/upscale', label: '超分辨率' },
-  { path: '/tagger', label: '图片打标' }
+  { path: '/tagger', label: '图片打标' },
+  { path: '/caption', label: 'Caption' },
+  { path: '/workflow', label: '工作流' }
 ]
+
+// --- 菜单显示设置 ---
+function loadMenuVisible() {
+  try {
+    return JSON.parse(localStorage.getItem('menu-visible') || '{}')
+  } catch { return {} }
+}
+
+const menuVisibleConfig = ref(loadMenuVisible())
+
+const navItems = computed(() => {
+  const cfg = menuVisibleConfig.value
+  return allNavItems.filter((item) => cfg[item.path] !== false)
+})
 
 function navigateTo(path) {
   activeNav.value = path
@@ -54,7 +135,15 @@ function dismissUpdate() {
 let unsubscribe = null
 let unsubUpdate = null
 
+function onMenuStorageChange(e) {
+  if (e.key === 'menu-visible') {
+    menuVisibleConfig.value = loadMenuVisible()
+  }
+}
+
 onMounted(() => {
+  window.api.getAppVersion().then(v => { appVersion.value = v })
+  window.addEventListener('storage', onMenuStorageChange)
   unsubscribe = window.api.onWindowStateChange((maximized) => {
     isMaximized.value = maximized
   })
@@ -71,9 +160,15 @@ onMounted(() => {
       updateStatus.value = ''
     }
   })
+  // 启动时同步 GPU 设置到后端
+  const gpuSaved = localStorage.getItem('gpu-enabled')
+  if (gpuSaved !== null) {
+    window.api.callPython('/set-gpu-config', { enabled: gpuSaved === 'true' }).catch(() => {})
+  }
 })
 
 onUnmounted(() => {
+  window.removeEventListener('storage', onMenuStorageChange)
   if (unsubscribe) unsubscribe()
   if (unsubUpdate) unsubUpdate()
 })
@@ -85,29 +180,13 @@ onUnmounted(() => {
     <header class="app-header">
       <div class="header-brand">
         <img src="./assets/icon.png" alt="icon" class="brand-icon" />
-        <span class="brand-title">IMG Editor</span>
+        <span class="brand-title">IMG Editor {{ appVersion ? `v${appVersion}` : '' }}</span>
       </div>
       <div class="header-drag"></div>
       <div class="header-right">
-        <button class="window-btn" title="最小化" @click="minimize">
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <rect x="2" y="5.5" width="8" height="1" fill="currentColor" />
-          </svg>
-        </button>
-        <button class="window-btn" title="最大化" @click="toggleMaximize">
-          <svg v-if="!isMaximized" width="12" height="12" viewBox="0 0 12 12">
-            <rect x="2" y="2" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-          </svg>
-          <svg v-else width="12" height="12" viewBox="0 0 12 12">
-            <rect x="3.5" y="1" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="1.5" y="3" width="7" height="7" rx="1" fill="#fff" stroke="currentColor" stroke-width="1.2" />
-          </svg>
-        </button>
-        <button class="window-btn close-btn" title="关闭" @click="quit">
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-          </svg>
-        </button>
+        <IconButton :icon="Minus" variant="window" title="最小化" :size="14" @click="minimize" />
+        <IconButton :icon="isMaximized ? Copy : Square" variant="window" title="最大化" :size="14" @click="toggleMaximize" />
+        <IconButton :icon="X" variant="window" tone="close" title="关闭" :size="14" @click="quit" />
       </div>
     </header>
 
@@ -128,20 +207,43 @@ onUnmounted(() => {
         <button class="update-btn" @click="doInstall">立即重启</button>
         <button class="update-btn dismiss" @click="dismissUpdate">稍后</button>
       </div>
-      <!-- 悬浮工具栏 -->
-      <div class="floating-toolbar">
-        <button
-          v-for="item in navItems"
-          :key="item.path"
-          :class="['toolbar-btn', { active: activeNav === item.path }]"
-          @click="navigateTo(item.path)"
-        >
-          {{ item.label }}
-        </button>
+      <!-- 顶部工具栏区域 -->
+      <div class="toolbar-row">
+        <!-- 左侧占位，保持导航栏居中 -->
+        <div class="toolbar-utils-placeholder"></div>
+        <!-- 中间：页面导航 -->
+        <div class="floating-toolbar">
+          <button
+            v-for="item in navItems"
+            :key="item.path"
+            :class="['toolbar-btn', { active: activeNav === item.path }]"
+            @click="navigateTo(item.path)"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+        <!-- 右侧：主题 + 设置 -->
+        <div class="toolbar-utils">
+          <!-- 主题切换 -->
+          <IconButton
+            :icon="theme === 'dark' ? Moon : Sun"
+            variant="toolbar"
+            :title="theme === 'light' ? '深色模式' : '浅色模式'"
+            @click="toggleTheme"
+          />
+          <!-- 设置 -->
+          <IconButton
+            :icon="Settings"
+            variant="toolbar"
+            :active="activeNav === '/settings'"
+            title="设置"
+            @click="openSettings"
+          />
+        </div>
       </div>
       <router-view v-slot="{ Component }">
         <Transition name="route-fade" mode="out-in">
-          <keep-alive :include="['ImageProcess', 'DataAugment', 'ImageTagger', 'ImageUpscale']" :max="5">
+          <keep-alive :include="['ImageGrab', 'ImageProcess', 'DataAugment', 'ImageTagger', 'ImageUpscale', 'ImageCaption', 'WorkflowCanvas']" :max="8">
             <component :is="Component" class="route-view" />
           </keep-alive>
         </Transition>
@@ -164,7 +266,7 @@ onUnmounted(() => {
   align-items: center;
   height: 36px;
   padding: 0;
-  background: #f3f4f6;
+  background: var(--color-header-bg);
   flex-shrink: 0;
   user-select: none;
 }
@@ -187,7 +289,7 @@ onUnmounted(() => {
 .brand-title {
   font-size: 12px;
   font-weight: 500;
-  color: #374151;
+  color: var(--color-text-secondary);
   white-space: nowrap;
 }
 
@@ -212,19 +314,19 @@ onUnmounted(() => {
   width: 46px;
   height: 100%;
   border: none;
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   cursor: pointer;
   transition: color 0.15s ease, background-color 0.15s ease;
 }
 
 .window-btn:hover {
-  color: #1b1b1f;
-  background: #f3f4f6;
+  color: var(--color-text);
+  background: var(--color-surface-hover);
 }
 
-.close-btn:hover {
+.window-btn.close:hover {
   color: #fff;
   background: #e53935;
 }
@@ -233,50 +335,106 @@ onUnmounted(() => {
 .app-main {
   flex: 1;
   overflow: hidden;
-  background: #fff;
+  background: var(--color-background);
   padding: 0 24px;
   position: relative;
   display: flex;
   flex-direction: column;
 }
 
-/* 悬浮工具栏 */
-.floating-toolbar {
+/* 顶部工具栏行：三列布局 */
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  margin: 8px 0 0;
+  flex-shrink: 0;
   z-index: 100;
+}
+
+/* 左侧工具按钮组 */
+.toolbar-utils {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px var(--color-shadow);
+  flex-shrink: 0;
+}
+
+/* 右侧占位，和左侧等宽以保持导航居中 */
+.toolbar-utils-placeholder {
+  width: 82px; /* 与 toolbar-utils 实际宽度匹配 */
+  flex-shrink: 0;
+}
+
+/* 悬浮导航栏 */
+.floating-toolbar {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
   width: fit-content;
-  margin: 8px auto 0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-  flex-shrink: 0;
+  margin: 0 auto;
+  box-shadow: 0 1px 3px var(--color-shadow);
 }
 
 .toolbar-btn {
-  padding: 6px 18px;
+  width: var(--ui-nav-button-width);
+  height: var(--ui-nav-button-height);
+  padding: 0 10px;
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   font-size: 13px;
   cursor: pointer;
   transition: color 0.15s ease, background-color 0.15s ease;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .toolbar-btn:hover {
-  color: #1b1b1f;
-  background: #f3f4f6;
+  color: var(--color-text);
+  background: var(--color-surface-hover);
 }
 
 .toolbar-btn.active {
-  color: #fff;
-  background: #1b1b1f;
+  color: var(--color-active-text);
+  background: var(--color-active-bg);
   font-weight: 500;
+}
+
+/* 工具栏图标按钮 */
+.toolbar-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+  padding: 0;
+}
+
+.toolbar-icon-btn:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+.toolbar-icon-btn.active {
+  color: var(--color-info);
+  background: var(--color-info-light);
 }
 
 .route-view {
@@ -306,18 +464,18 @@ onUnmounted(() => {
   gap: 10px;
   padding: 8px 14px;
   margin: 8px 0 0;
-  background: #eef2ff;
-  border: 1px solid #c7d2fe;
+  background: var(--color-primary-light);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
-  color: #3730a3;
+  color: var(--color-text);
   flex-shrink: 0;
 }
 
 .update-btn {
   padding: 3px 12px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: #4f46e5;
   color: #fff;
   font-size: 12px;
@@ -335,13 +493,13 @@ onUnmounted(() => {
 }
 
 .update-btn.dismiss:hover {
-  background: #e0e7ff;
+  background: var(--color-surface-hover);
 }
 
 .update-progress {
   flex: 1;
   height: 6px;
-  background: #c7d2fe;
+  background: var(--color-border);
   border-radius: 3px;
   overflow: hidden;
 }

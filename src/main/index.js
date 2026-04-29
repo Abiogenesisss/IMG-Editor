@@ -2,10 +2,11 @@ import { app, protocol, net, session } from 'electron'
 import { registerIPC } from './ipc'
 import { openMainWindow, hasAnyWindow } from './windowManager'
 import { setupAutoUpdater } from './updater'
+import { isLocalFileAccessAllowed } from './localFileAccess'
 import { pathToFileURL } from 'url'
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'local-file', privileges: { bypassCSP: true, stream: true, supportFetchAPI: true } }
+  { scheme: 'local-file', privileges: { stream: true, supportFetchAPI: true } }
 ])
 
 // 启用 SharedArrayBuffer（WASM 多线程需要）
@@ -23,9 +24,12 @@ app.whenReady().then(() => {
     })
   })
 
-  protocol.handle('local-file', (request) => {
+  protocol.handle('local-file', async (request) => {
     // local-file:///C:/path/to/img.jpg -> C:/path/to/img.jpg
     const filePath = decodeURIComponent(request.url.slice('local-file:///'.length))
+    if (!await isLocalFileAccessAllowed(filePath)) {
+      return new Response('Forbidden', { status: 403 })
+    }
     return net.fetch(pathToFileURL(filePath).toString())
   })
 

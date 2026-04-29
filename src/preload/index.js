@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   quitApp: () => ipcRenderer.send('quit-app'),
   minimizeApp: () => ipcRenderer.send('minimize-app'),
   maximizeApp: () => ipcRenderer.send('maximize-app'),
@@ -10,49 +11,25 @@ const api = {
     ipcRenderer.on('window-state-change', handler)
     return () => ipcRenderer.removeListener('window-state-change', handler)
   },
+  getApiConfigs: () => ipcRenderer.invoke('get-api-configs'),
+  saveApiConfigs: (configs) => ipcRenderer.invoke('save-api-configs', configs),
+  migrateApiConfigs: (configs) => ipcRenderer.invoke('migrate-api-configs', configs),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   resolveOutputDir: (inputDir) => ipcRenderer.invoke('resolve-output-dir', inputDir),
   readImages: (folderPath) => ipcRenderer.invoke('read-images', folderPath),
+  readImagesRecursive: (folderPath) => ipcRenderer.invoke('read-images-recursive', folderPath),
+  createWorkflowRunDir: (baseDir, name) => ipcRenderer.invoke('create-workflow-run-dir', baseDir, name),
+  copyWorkflowFiles: (files, outputDir) => ipcRenderer.invoke('copy-workflow-files', files, outputDir),
   generateThumbnail: (filePath) => ipcRenderer.invoke('generate-thumbnail', filePath),
   deleteImage: (filePath) => ipcRenderer.invoke('delete-image', filePath),
-  mirrorFlip: (filePaths, outputDir) => ipcRenderer.invoke('mirror-flip', filePaths, outputDir),
-  threeStageSplit: (filePaths, outputDir, personConf, halfbodyConf, headConf) =>
-    ipcRenderer.invoke('three-stage-split', filePaths, outputDir, personConf, halfbodyConf, headConf),
-  resolutionFilter: (filePaths, minWidth, maxWidth, minHeight, maxHeight) =>
-    ipcRenderer.invoke('resolution-filter', filePaths, minWidth, maxWidth, minHeight, maxHeight),
-  batchResize: (filePaths, outputDir, width, height, allowUpscale, faceThreshold) =>
-    ipcRenderer.invoke('batch-resize', filePaths, outputDir, width, height, allowUpscale, faceThreshold),
-  formatConvert: (filePaths, outputDir, targetFormat) =>
-    ipcRenderer.invoke('format-convert', filePaths, outputDir, targetFormat),
-  proportionalCrop: (filePaths, outputDir, ratioW, ratioH) =>
-    ipcRenderer.invoke('proportional-crop', filePaths, outputDir, ratioW, ratioH),
-  autoCrop: (filePaths, outputDir, ratioList) =>
-    ipcRenderer.invoke('auto-crop', filePaths, outputDir, ratioList),
-  deduplicate: (filePaths, hashThresh, phashThresh, colorThresh) =>
-    ipcRenderer.invoke('deduplicate', filePaths, hashThresh, phashThresh, colorThresh),
-  cluster: (filePaths, options) =>
-    ipcRenderer.invoke('cluster', filePaths, options),
-  clusterMove: (filesByGroup, outputDir) =>
-    ipcRenderer.invoke('cluster-move', filesByGroup, outputDir),
-  cutout: (filePaths, outputDir, count, sizeRatio) =>
-    ipcRenderer.invoke('cutout', filePaths, outputDir, count, sizeRatio),
-  perspective: (filePaths, outputDir, intensity) =>
-    ipcRenderer.invoke('perspective', filePaths, outputDir, intensity),
-  gaussianBlurNoise: (filePaths, outputDir, blurRadius, noiseSigma) =>
-    ipcRenderer.invoke('gaussian-blur-noise', filePaths, outputDir, blurRadius, noiseSigma),
-  previewAugment: (filePath, augType, params) =>
-    ipcRenderer.invoke('preview-augment', filePath, augType, params),
+  scanImageSources: (body) => ipcRenderer.invoke('scan-image-sources', body),
+  loadGrabPreview: (body) => ipcRenderer.invoke('load-grab-preview', body),
+  downloadGrabImages: (body) => ipcRenderer.invoke('download-grab-images', body),
+  // --- Python 后端通用代理 ---
+  callPython: (endpoint, body) => ipcRenderer.invoke('call-python', endpoint, body),
   abortTask: () => ipcRenderer.invoke('abort-task'),
-  cleanupCaches: () => ipcRenderer.invoke('cleanup-caches'),
-  taggerModels: () => ipcRenderer.invoke('tagger-models'),
-  taggerDownload: (modelKey) => ipcRenderer.invoke('tagger-download', modelKey),
-  taggerTag: (filePaths, modelKey, generalThreshold, characterThreshold) =>
-    ipcRenderer.invoke('tagger-tag', filePaths, modelKey, generalThreshold, characterThreshold),
-  upscale: (filePaths, outputDir, scale, denoise, model, style, tta) =>
-    ipcRenderer.invoke('upscale', filePaths, outputDir, scale, denoise, model, style, tta),
-  upscaleModels: () => ipcRenderer.invoke('upscale-models'),
-  previewUpscale: (filePath, scale, denoise, model, style, tta) =>
-    ipcRenderer.invoke('preview-upscale', filePath, scale, denoise, model, style, tta),
+  // --- Node.js 本地文件操作 ---
+  checkPathExists: (targetPath) => ipcRenderer.invoke('check-path-exists', targetPath),
   batchReadTags: (imagePaths) => ipcRenderer.invoke('batch-read-tags', imagePaths),
   saveImageTags: (imagePath, tags, outputDir) => ipcRenderer.invoke('save-image-tags', imagePath, tags, outputDir),
   batchSaveTags: (tagsMap, outputDir) => ipcRenderer.invoke('batch-save-tags', tagsMap, outputDir),
@@ -65,6 +42,8 @@ const api = {
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
+  getAutoCheckUpdate: () => ipcRenderer.invoke('get-auto-check-update'),
+  setAutoCheckUpdate: (enabled) => ipcRenderer.invoke('set-auto-check-update', enabled),
   onUpdateStatus: (callback) => {
     const handler = (_event, status, data) => callback(status, data)
     ipcRenderer.on('update-status', handler)

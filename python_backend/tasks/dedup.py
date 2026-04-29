@@ -3,6 +3,8 @@
 import numpy as np
 from PIL import Image
 
+from tasks.gpu_config import is_gpu_enabled, gpu_status as get_gpu_status
+
 Image.MAX_IMAGE_PIXELS = None
 
 
@@ -231,7 +233,7 @@ def _is_valid_homography(H, src_hw):
 
 def find_duplicates_perceptual(feature_results, hash_thresh=10, orb_min_inliers=20,
                                orb_inlier_ratio=0.3, phash_thresh=10,
-                               color_thresh=0.5, progress_cb=None):
+                               color_thresh=0.5, progress_cb=None, return_debug=False):
     """
     两层去重策略 + 二次验证 + 星形分组（防链式传递）：
     第一层 dHash：汉明距离 <= hash_thresh 作为候选，再经 pHash + 颜色直方图二次验证
@@ -286,7 +288,44 @@ def find_duplicates_perceptual(feature_results, hash_thresh=10, orb_min_inliers=
     hist_norms[hist_norms == 0] = 1
     hist_normed = hist_centered / hist_norms
 
-    CHUNK = 2000
+    gpu_state = {}
+    try:
+        gpu_state = get_gpu_status()
+    except Exception:
+        gpu_state = {}
+
+    gpu_switch_enabled = bool(gpu_state.get("enabled", False))
+    cuda_available = bool(gpu_state.get("cuda_available", False))
+
+    use_gpu = False
+    torch = None
+    backend_reason = "gpu_switch_off"
+    if not gpu_switch_enabled:
+        backend_reason = "gpu_switch_off"
+    elif not cuda_available:
+        backend_reason = "cuda_unavailable"
+    elif is_gpu_enabled():
+        try:
+            import torch as _torch
+            if _torch.cuda.is_available():
+                torch = _torch
+                use_gpu = True
+                backend_reason = "cuda_hash_match"
+            else:
+                backend_reason = "torch_cuda_unavailable"
+        except Exception as e:
+            backend_reason = f"torch_import_failed:{e.__class__.__name__}"
+
+    debug_info = {
+        "hash_backend": "cuda" if use_gpu else "cpu",
+        "orb_backend": "cpu",
+        "gpu_switch_enabled": gpu_switch_enabled,
+        "cuda_available": cuda_available,
+        "reason": backend_reason,
+    }
+
+    # GPU 下减小分块，避免 XOR 矩阵过大导致显存压力
+    CHUNK = 768 if use_gpu else 2000
     total_chunks = (n + CHUNK - 1) // CHUNK
     chunk_done = 0
     total_chunk_pairs = total_chunks * (total_chunks + 1) // 2
@@ -295,6 +334,57 @@ def find_duplicates_perceptual(feature_results, hash_thresh=10, orb_min_inliers=
         ci_end = min(ci + CHUNK, n)
         for cj in range(ci, n, CHUNK):
             cj_end = min(cj + CHUNK, n)
+            if use_gpu:
+                hashes_i = torch.as_tensor(hashes[ci:ci_end], device="cuda", dtype=torch.bool)
+                hashes_j = torch.as_tensor(hashes[cj:cj_end], device="cuda", dtype=torch.bool)
+                phashes_i = torch.as_tensor(phashes[ci:ci_end], device="cuda", dtype=torch.bool)
+                phashes_j = torch.as_tensor(phashes[cj:cj_end], device="cuda", dtype=torch.bool)
+                hist_i = torch.as_tensor(hist_normed[ci:ci_end], device="cuda", dtype=torch.float32)
+                hist_j = torch.as_tensor(hist_normed[cj:cj_end], device="cuda", dtype=torch.float32)
+                valid_i = torch.as_tensor(hist_valid[ci:ci_end], device="cuda", dtype=torch.bool)
+                valid_j = torch.as_tensor(hist_valid[cj:cj_end], device="cuda", dtype=torch.bool)
+
+                hamming_d = torch.count_nonzero(
+                    torch.logical_xor(hashes_i[:, None, :], hashes_j[None, :, :]),
+                    dim=2
+                )
+                hamming_p = torch.count_nonzero(
+                    torch.logical_xor(phashes_i[:, None, :], phashes_j[None, :, :]),
+                    dim=2
+                )
+                corr_block = hist_i @ hist_j.transpose(0, 1)
+                both_valid = valid_i[:, None] & valid_j[None, :]
+                corr_block = torch.where(both_valid, corr_block, torch.ones_like(corr_block))
+
+                cand_mask = (
+                    (hamming_d <= scaled_hash_thresh)
+                    & (hamming_p <= scaled_phash_thresh)
+                    & (corr_block >= color_thresh)
+                )
+                if ci == cj:
+                    cand_mask &= torch.triu(
+                        torch.ones_like(cand_mask, dtype=torch.bool),
+                        diagonal=1
+                    )
+
+                rows_t, cols_t = torch.where(cand_mask)
+                if rows_t.numel() > 0:
+                    rows = rows_t.cpu().numpy()
+                    cols = cols_t.cpu().numpy()
+                    gi = ci + rows
+                    gj = cj + cols
+                    sims = 1.0 - hamming_d[rows_t, cols_t].to(dtype=torch.float32).cpu().numpy() / hash_bits
+                    np.maximum.at(max_sim, gi, sims)
+                    np.maximum.at(max_sim, gj, sims)
+                    for k in range(len(rows)):
+                        a, b = int(gi[k]), int(gj[k])
+                        adj[a].add(b)
+                        adj[b].add(a)
+
+                chunk_done += 1
+                if progress_cb:
+                    progress_cb(chunk_done, total_chunk_pairs + n, "hash")
+                continue
 
             # 三项指标批量矩阵计算
             hamming_d = (hashes[ci:ci_end, None, :] != hashes[None, cj:cj_end, :]).sum(axis=2)
@@ -336,33 +426,55 @@ def find_duplicates_perceptual(feature_results, hash_thresh=10, orb_min_inliers=
                    if valid[i].get("orb_des") is not None and len(valid[i]["orb_des"]) >= 2]
     orb_count = len(orb_indices)
 
+    # 收集需要 ORB 匹配的候选对（排除已被第一层匹配的对）
+    orb_pairs = []
     for oi, i in enumerate(orb_indices):
-        des_i = valid[i]["orb_des"]
-        kp_i = valid[i]["orb_kp"]
         for j in orb_indices[oi + 1:]:
             if j in adj[i]:
                 continue
-            des_j = valid[j]["orb_des"]
-            kp_j = valid[j]["orb_kp"]
+            orb_pairs.append((i, j))
 
-            matches = bf.knnMatch(des_i, des_j, k=2)
-            good = [(m[0].queryIdx, m[0].trainIdx)
-                    for m in matches if len(m) == 2
-                    and m[0].distance < 0.75 * m[1].distance]
+    orb_total = len(orb_pairs)
 
-            if len(good) < 4:
-                continue
+    def _match_one_pair(pair):
+        """单对 ORB 匹配 + RANSAC 几何验证（线程安全）"""
+        i, j = pair
+        des_i = valid[i]["orb_des"]
+        kp_i = valid[i]["orb_kp"]
+        des_j = valid[j]["orb_des"]
+        kp_j = valid[j]["orb_kp"]
 
-            src_pts = kp_i[[qi for qi, _ in good]]
-            dst_pts = kp_j[[ti for _, ti in good]]
+        matches = bf.knnMatch(des_i, des_j, k=2)
+        good = [(m[0].queryIdx, m[0].trainIdx)
+                for m in matches if len(m) == 2
+                and m[0].distance < 0.75 * m[1].distance]
 
-            H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 3.0)
-            inliers = int(mask.sum()) if mask is not None else 0
+        if len(good) < 4:
+            return None
 
-            if (inliers >= orb_min_inliers
-                    and inliers / len(good) >= orb_inlier_ratio
-                    and _is_valid_homography(H, valid[i].get("orb_hw", (512, 512)))):
-                score = inliers / len(good)
+        src_pts = kp_i[[qi for qi, _ in good]]
+        dst_pts = kp_j[[ti for _, ti in good]]
+
+        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 3.0)
+        inliers = int(mask.sum()) if mask is not None else 0
+
+        if (inliers >= orb_min_inliers
+                and inliers / len(good) >= orb_inlier_ratio
+                and _is_valid_homography(H, valid[i].get("orb_hw", (512, 512)))):
+            return (i, j, inliers / len(good))
+        return None
+
+    # 多线程并行 ORB 匹配（OpenCV 释放 GIL，线程并行有效）
+    from concurrent.futures import ThreadPoolExecutor
+    import os
+    n_workers = min(os.cpu_count() or 4, 8)
+    orb_done = 0
+
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        for result in executor.map(_match_one_pair, orb_pairs):
+            orb_done += 1
+            if result is not None:
+                i, j, score = result
                 if score > max_sim[i]:
                     max_sim[i] = score
                 if score > max_sim[j]:
@@ -370,11 +482,11 @@ def find_duplicates_perceptual(feature_results, hash_thresh=10, orb_min_inliers=
                 adj[i].add(j)
                 adj[j].add(i)
 
-        if progress_cb:
-            progress_cb(total_chunk_pairs + oi + 1, total_chunk_pairs + orb_count, "orb")
+            if progress_cb and orb_done % 50 == 0:
+                progress_cb(orb_done, orb_total, "orb")
 
     if progress_cb:
-        progress_cb(total_chunk_pairs + orb_count, total_chunk_pairs + orb_count, "orb")
+        progress_cb(orb_total, orb_total, "orb")
 
     # ---- 星形分组（防止 Union-Find 链式传递） ----
     # 先用 BFS 找连通分量
@@ -423,4 +535,6 @@ def find_duplicates_perceptual(feature_results, hash_thresh=10, orb_min_inliers=
         similarity = round(float(max_sim[i]) * 100, 1) if gid is not None else None
         result.append({"file": r["file"], "group": gid, "similarity": similarity})
 
+    if return_debug:
+        return result, debug_info
     return result

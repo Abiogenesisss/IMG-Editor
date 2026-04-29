@@ -1,6 +1,10 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
+import FolderRow from '../components/FolderRow.vue'
+import IconButton from '../components/IconButton.vue'
+import ImageStatusBar from '../components/ImageStatusBar.vue'
+import { ChevronLeft, ChevronRight, Tags, X } from 'lucide-vue-next'
 
 const downloading = ref(false)
 const downloadInfo = ref('')
@@ -10,7 +14,6 @@ const {
   inputFolder,
   outputFolder,
   images,
-  selectedImages,
   selectAll,
   thumbnails,
   imageCount,
@@ -19,6 +22,7 @@ const {
   chooseInputFolder,
   chooseOutputFolder,
   loadInputFolder,
+  clearCurrentFolder,
   toggleSelect,
   toggleSelectAll,
   isSelected,
@@ -54,7 +58,7 @@ const models = ref([])
 const selectedModel = ref('')
 
 async function loadModels() {
-  const result = await window.api.taggerModels()
+  const result = await window.api.callPython('/tagger-models', {})
   if (result.success) {
     models.value = result.models
     const downloaded = result.models.find((m) => m.downloaded)
@@ -67,7 +71,7 @@ async function downloadModel() {
   downloading.value = true
   downloadInfo.value = '准备下载...'
   try {
-    const result = await window.api.taggerDownload(selectedModel.value)
+    const result = await window.api.callPython('/tagger-download', { model_key: selectedModel.value })
     if (result.success) { await loadModels(); downloadInfo.value = '' }
     else downloadInfo.value = result.error || '下载失败'
   } catch (err) { downloadInfo.value = err.message || '下载失败' }
@@ -91,9 +95,17 @@ function selectModel(key) {
 const generalThreshold = ref(0.35)
 const characterThreshold = ref(0.85)
 const replaceUnderscore = ref(true)
+// CL Tagger 类别开关:仅在选中 CL Tagger 时生效
+const keepCopyright = ref(true)
+const keepRating = ref(false)
+const keepMeta = ref(false)
+const keepModel = ref(false)
+const keepQuality = ref(false)
+
+const isClTagger = computed(() => selectedModel.value === 'cl-tagger-v1.02')
 
 // ===================== 标签数据 =====================
-const tagsMap = ref({})
+const tagsMap = shallowRef({})
 const dirtySet = ref(new Set())
 const dirtyCount = computed(() => dirtySet.value.size)
 
@@ -130,7 +142,17 @@ async function runTag() {
   processingAction.value = 'tag'
   tagError.value = ''
   try {
-    const result = await window.api.taggerTag(files, selectedModel.value, generalThreshold.value, characterThreshold.value)
+    const result = await window.api.callPython('/tagger-tag', {
+      files,
+      model_key: selectedModel.value,
+      general_threshold: generalThreshold.value,
+      character_threshold: characterThreshold.value,
+      keep_copyright: keepCopyright.value,
+      keep_rating: keepRating.value,
+      keep_meta: keepMeta.value,
+      keep_model: keepModel.value,
+      keep_quality: keepQuality.value
+    })
     if (result.aborted) return
     if (result.success) {
       const newMap = { ...tagsMap.value }
@@ -152,7 +174,7 @@ async function runTag() {
     }
   } catch (err) {
     tagError.value = err.message || '打标请求异常'
-  } finally { if (processingAction.value === 'tag') processingAction.value = null }
+  } finally { if (processingAction.value === 'tag') processingAction.value = null; window.api.callPython('/cleanup-caches', {}).catch(() => {}) }
 }
 
 // ===================== 保存 =====================
@@ -295,11 +317,7 @@ function navEditor(direction) {
 }
 
 function getTagPreview(imgPath) {
-  const tags = tagsMap.value[imgPath]
-  if (!tags) return ''
-  const parts = splitTags(tags)
-  if (parts.length <= 3) return parts.join(', ')
-  return parts.slice(0, 3).join(', ') + ` +${parts.length - 3}`
+  return tagsMap.value[imgPath] || ""
 }
 
 // 当前图片是否有某个 tag
@@ -366,6 +384,22 @@ function removeTagFromAll(tagName) {
   const fs = new Set(filterTags.value); fs.delete(tagName); filterTags.value = fs
 }
 
+function clearTaggerFolder() {
+  tagsMap.value = {}
+  dirtySet.value = new Set()
+  filterTags.value = new Set()
+  tagSearch.value = ''
+  tagError.value = ''
+  modelDropOpen.value = false
+  editingImage.value = null
+  editingTags.value = ''
+  customTagInput.value = ''
+  batchInput.value = ''
+  batchReplaceFrom.value = ''
+  batchReplaceTo.value = ''
+  clearCurrentFolder()
+}
+
 // 左侧面板显示/隐藏
 const showTagPanel = ref(true)
 </script>
@@ -375,26 +409,20 @@ const showTagPanel = ref(true)
     <!-- 顶部工具条 -->
     <div class="process-toolbar">
       <div class="folder-section">
-        <div class="folder-row">
-          <span class="folder-label">输入</span>
-          <input
-            class="folder-input"
-            :value="inputFolder"
-            placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
-            @change="e => e.target.value.trim() && loadInputFolder(e.target.value.trim())"
-          />
-          <button class="folder-browse-btn" @click="chooseInputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
-        </div>
-        <div class="folder-row">
-          <span class="folder-label">输出</span>
-          <input
-            class="folder-input"
-            :value="outputFolder"
-            :placeholder="inputFolder ? '标签保存在图片同目录' : '输入文件夹路径...'"
-            @change="e => outputFolder = e.target.value.trim()"
-          />
-          <button class="folder-browse-btn" @click="chooseOutputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
-        </div>
+        <FolderRow
+          v-model="inputFolder"
+          label="输入"
+          placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
+          @commit="path => path && loadInputFolder(path)"
+          @browse="chooseInputFolder"
+        />
+        <FolderRow
+          v-model="outputFolder"
+          label="输出"
+          :placeholder="inputFolder ? '标签保存在图片同目录' : '输入文件夹路径...'"
+          @commit="path => { outputFolder = path }"
+          @browse="chooseOutputFolder"
+        />
       </div>
       <div class="action-section">
         <div class="model-select-wrap">
@@ -442,6 +470,26 @@ const showTagPanel = ref(true)
         <span :class="['toggle-switch', { on: replaceUnderscore }]"><span class="toggle-knob"></span></span>
         <span class="toggle-text">下划线转空格</span>
       </label>
+      <label :class="['threshold-toggle', 'cl-only', { dim: !isClTagger }]" @click="keepCopyright = !keepCopyright">
+        <span :class="['toggle-switch', { on: keepCopyright && isClTagger }]"><span class="toggle-knob"></span></span>
+        <span class="toggle-text">Copyright</span>
+      </label>
+      <label :class="['threshold-toggle', 'cl-only', { dim: !isClTagger }]" @click="keepRating = !keepRating">
+        <span :class="['toggle-switch', { on: keepRating && isClTagger }]"><span class="toggle-knob"></span></span>
+        <span class="toggle-text">Rating</span>
+      </label>
+      <label :class="['threshold-toggle', 'cl-only', { dim: !isClTagger }]" @click="keepMeta = !keepMeta">
+        <span :class="['toggle-switch', { on: keepMeta && isClTagger }]"><span class="toggle-knob"></span></span>
+        <span class="toggle-text">Meta</span>
+      </label>
+      <label :class="['threshold-toggle', 'cl-only', { dim: !isClTagger }]" @click="keepModel = !keepModel">
+        <span :class="['toggle-switch', { on: keepModel && isClTagger }]"><span class="toggle-knob"></span></span>
+        <span class="toggle-text">Model</span>
+      </label>
+      <label :class="['threshold-toggle', 'cl-only', { dim: !isClTagger }]" @click="keepQuality = !keepQuality">
+        <span :class="['toggle-switch', { on: keepQuality && isClTagger }]"><span class="toggle-knob"></span></span>
+        <span class="toggle-text">Quality</span>
+      </label>
     </div>
 
     <!-- 错误提示 -->
@@ -451,33 +499,33 @@ const showTagPanel = ref(true)
     </div>
 
     <!-- 状态栏 -->
-    <div v-if="imageCount > 0" class="status-bar">
-      <label class="select-all-label" @click="toggleSelectAll">
-        <span :class="['checkbox', { checked: selectAll }]"></span>
-        全选
-      </label>
-      <div class="bar-btn-group">
-        <button :class="['bar-icon-btn', { spinning: refreshing }]" title="刷新" @click="refreshImages">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path></svg>
-        </button>
-        <button class="bar-icon-btn delete" title="删除选中图片" :disabled="selectedCount === 0" @click="deleteSelected">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
-        </button>
-        <button :class="['bar-icon-btn', { active: showTagPanel }]" title="标签面板" @click="showTagPanel = !showTagPanel">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
-        </button>
-      </div>
-      <span v-if="processingAction && progressTotal > 0" class="status-progress">
-        <span class="progress-bar-track"><span class="progress-bar-fill" :style="{ width: (progressDone / progressTotal * 100) + '%' }"></span></span>
-        <span class="progress-text">{{ progressDone }} / {{ progressTotal }}</span>
-        <button class="abort-btn" title="终止任务" @click="abortTask">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
-      </span>
-      <span v-else class="status-text">
+    <ImageStatusBar
+      :image-count="imageCount"
+      :selected-count="selectedCount"
+      :select-all="selectAll"
+      :refreshing="refreshing"
+      :processing-action="processingAction"
+      :progress-done="progressDone"
+      :progress-total="progressTotal"
+      processing-label="打标"
+      @toggle-select-all="toggleSelectAll"
+      @refresh="refreshImages"
+      @clear-folder="clearTaggerFolder"
+      @delete-selected="deleteSelected"
+      @abort="abortTask"
+    >
+      <template #actions>
+        <IconButton
+          :icon="Tags"
+          :active="showTagPanel"
+          title="标签面板"
+          @click="showTagPanel = !showTagPanel"
+        />
+      </template>
+      <template #idle>
         共 {{ imageCount }} 张<template v-if="filterTags.size > 0">，筛选 {{ filteredImages.length }} 张</template>，已选 {{ selectedCount }} 张
-      </span>
-    </div>
+      </template>
+    </ImageStatusBar>
 
     <!-- ========== 主内容三栏布局 ========== -->
     <div v-if="imageCount > 0" class="tagger-body">
@@ -586,15 +634,9 @@ const showTagPanel = ref(true)
           <div class="editor-header">
             <span class="editor-filename">{{ editingImage.name }}</span>
             <div class="editor-nav">
-              <button class="editor-nav-btn" title="上一张" @click="navEditor(-1)">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-              </button>
-              <button class="editor-nav-btn" title="下一张" @click="navEditor(1)">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-              </button>
-              <button class="editor-nav-btn close" title="关闭" @click="closeEditor">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-              </button>
+              <IconButton :icon="ChevronLeft" variant="editor" title="上一张" @click="navEditor(-1)" />
+              <IconButton :icon="ChevronRight" variant="editor" title="下一张" @click="navEditor(1)" />
+              <IconButton :icon="X" variant="editor" tone="close" title="关闭" @click="closeEditor" />
             </div>
           </div>
           <div class="editor-preview">
@@ -656,11 +698,11 @@ const showTagPanel = ref(true)
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: var(--color-error-light);
+  border: 1px solid var(--color-error-border);
   border-radius: 4px;
   font-size: 12px;
-  color: #dc2626;
+  color: var(--color-error);
   flex-shrink: 0;
   white-space: pre-wrap;
   word-break: break-all;
@@ -669,7 +711,7 @@ const showTagPanel = ref(true)
   margin-left: auto;
   border: none;
   background: none;
-  color: #dc2626;
+  color: var(--color-error);
   font-size: 16px;
   cursor: pointer;
   flex-shrink: 0;
@@ -677,24 +719,26 @@ const showTagPanel = ref(true)
 }
 
 /* ===== 阈值栏 ===== */
-.threshold-bar { display: flex; gap: 24px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; flex-shrink: 0; }
+.threshold-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 20px; padding: 6px 0; min-height: 36px; box-sizing: border-box; border-bottom: 1px solid var(--color-border); flex-shrink: 0; }
 .threshold-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.threshold-label { color: #6b7280; white-space: nowrap; width: 56px; flex-shrink: 0; }
-.threshold-item input[type="range"] { width: 120px; height: 4px; accent-color: #1b1b1f; cursor: pointer; }
-.threshold-value { font-size: 12px; color: #1b1b1f; font-weight: 500; min-width: 32px; text-align: right; }
+.threshold-label { color: var(--color-text-secondary); white-space: nowrap; width: 56px; flex-shrink: 0; }
+.threshold-item input[type="range"] { width: 120px; height: 4px; accent-color: var(--color-text); cursor: pointer; }
+.threshold-value { font-size: 12px; color: var(--color-text); font-weight: 500; min-width: 32px; text-align: right; }
 .threshold-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; flex-shrink: 0; }
-.toggle-text { font-size: 12px; color: #6b7280; white-space: nowrap; transition: color 0.15s; }
-.threshold-toggle:hover .toggle-text { color: #1b1b1f; }
+.toggle-text { font-size: 12px; color: var(--color-text-secondary); white-space: nowrap; transition: color 0.15s; }
+.threshold-toggle:hover .toggle-text { color: var(--color-text); }
+.threshold-toggle.cl-only.dim { opacity: 0.4; }
+.threshold-toggle.cl-only.dim:hover .toggle-text { color: var(--color-text-secondary); }
 .toggle-switch {
   position: relative;
   width: 32px;
   height: 18px;
   border-radius: 9px;
-  background: #d1d5db;
+  background: var(--color-border-unchecked);
   transition: background 0.2s;
   flex-shrink: 0;
 }
-.toggle-switch.on { background: #1b1b1f; }
+.toggle-switch.on { background: var(--color-active-bg); }
 .toggle-knob {
   position: absolute;
   top: 2px;
@@ -702,8 +746,8 @@ const showTagPanel = ref(true)
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  background: var(--color-active-text);
+  box-shadow: 0 1px 3px var(--color-shadow);
   transition: transform 0.2s;
 }
 .toggle-switch.on .toggle-knob { transform: translateX(14px); }
@@ -719,11 +763,11 @@ const showTagPanel = ref(true)
   justify-content: space-between;
   height: 34px;
   padding: 0 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   font-size: 13px;
-  color: #1b1b1f;
-  background: #fff;
+  color: var(--color-text);
+  background: var(--color-input-bg);
   cursor: pointer;
   user-select: none;
   transition: border-color 0.15s;
@@ -731,12 +775,12 @@ const showTagPanel = ref(true)
   box-sizing: border-box;
   gap: 6px;
 }
-.custom-select:hover { border-color: #b0b0b0; }
+.custom-select:hover { border-color: var(--color-border-hover); }
 .custom-select.disabled { opacity: 0.6; cursor: not-allowed; pointer-events: none; }
 .custom-select-value { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .custom-select-arrow {
   flex-shrink: 0;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   transition: transform 0.2s;
 }
 .custom-select-arrow.open { transform: rotate(180deg); }
@@ -746,10 +790,10 @@ const showTagPanel = ref(true)
   left: 0;
   min-width: 100%;
   width: max-content;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-border);
   border-radius: 2px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px var(--color-shadow);
   z-index: 20;
   overflow: hidden;
   max-height: 300px;
@@ -758,13 +802,13 @@ const showTagPanel = ref(true)
 .custom-select-item {
   padding: 6px 10px;
   font-size: 12px;
-  color: #374151;
+  color: var(--color-text);
   cursor: pointer;
   transition: background 0.1s, color 0.1s;
   white-space: nowrap;
 }
-.custom-select-item:hover { background: #f3f4f6; }
-.custom-select-item.active { background: #1b1b1f; color: #fff; }
+.custom-select-item:hover { background: var(--color-surface-hover); }
+.custom-select-item.active { background: var(--color-active-bg); color: var(--color-active-text); }
 
 /* 下拉框动画 */
 .dropdown-enter-active,
@@ -778,18 +822,18 @@ const showTagPanel = ref(true)
   transform: scaleY(0.9);
 }
 
-.download-btn { color: #3b82f6; border-color: #3b82f6; }
-.download-btn:hover:not(:disabled) { background: #eff6ff; }
-.download-info { font-size: 11px; color: #6b7280; white-space: nowrap; }
+.download-btn { color: var(--color-info); border-color: var(--color-info); }
+.download-btn:hover:not(:disabled) { background: var(--color-info-light); }
+.download-info { font-size: 11px; color: var(--color-text-secondary); white-space: nowrap; }
 
 /* ===== 三栏布局 ===== */
 .tagger-body { flex: 1; min-height: 0; display: flex; gap: 0; overflow: hidden; }
 .tagger-grid { flex: 1; min-width: 0; }
-.image-card.editing { border-color: #3b82f6; }
+.image-card.editing { border-color: var(--color-info); }
 
 /* ===== 标签摘要 ===== */
 .tag-badge { position: absolute; bottom: 0; left: 0; right: 0; padding: 3px 6px; font-size: 10px; color: #fff; background: rgba(0,0,0,0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; z-index: 1; }
-.dirty-dot { position: absolute; top: 6px; left: 6px; width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; z-index: 2; pointer-events: none; }
+.dirty-dot { position: absolute; top: 6px; left: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--color-warning); z-index: 2; pointer-events: none; }
 
 /* ============================================
    左侧标签管理面板
@@ -797,62 +841,62 @@ const showTagPanel = ref(true)
 .tag-panel {
   width: 360px;
   flex-shrink: 0;
-  border-right: 1px solid #e5e7eb;
+  border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  background: #fafafa;
+  background: var(--color-surface-soft);
   overflow: hidden;
 }
 
-.tp-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
-.tp-title { font-size: 13px; font-weight: 600; color: #1b1b1f; }
-.tp-count { font-size: 11px; color: #9ca3af; }
+.tp-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--color-border-light); }
+.tp-title { font-size: 13px; font-weight: 600; color: var(--color-text); }
+.tp-count { font-size: 11px; color: var(--color-text-muted); }
 
 .tp-search {
   margin: 8px 10px 0;
   height: 30px;
   padding: 0 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   border-radius: 2px;
   font-size: 12px;
-  color: #1b1b1f;
+  color: var(--color-text);
   outline: none;
-  background: #fff;
+  background: var(--color-input-bg);
   box-sizing: border-box;
 }
-.tp-search:focus { border-color: #1b1b1f; }
+.tp-search:focus { border-color: var(--color-text); }
 
 /* 排序 / 筛选控件 */
-.tp-controls { padding: 6px 10px 0; border-bottom: 1px solid #f0f0f0; }
+.tp-controls { padding: 6px 10px 0; border-bottom: 1px solid var(--color-border-light); }
 .tp-control-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
-.tp-control-label { font-size: 11px; color: #6b7280; flex-shrink: 0; width: 28px; }
+.tp-control-label { font-size: 11px; color: var(--color-text-secondary); flex-shrink: 0; width: 28px; }
 .tp-sort-group { display: flex; gap: 4px; }
 
 .tp-chip {
   padding: 2px 8px;
-  border: 1px solid #e5e7eb;
-  border-radius: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   font-size: 11px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   cursor: pointer;
   user-select: none;
   transition: color 0.12s, background-color 0.12s, border-color 0.12s;
-  background: #fff;
+  background: var(--color-input-bg);
 }
-.tp-chip:hover { border-color: #b0b0b0; }
-.tp-chip.active { background: #1b1b1f; border-color: #1b1b1f; color: #fff; }
+.tp-chip:hover { border-color: var(--color-border-hover); }
+.tp-chip.active { background: var(--color-active-bg); border-color: var(--color-active-bg); color: var(--color-active-text); }
 
 .tp-clear-btn {
   margin-left: auto;
   padding: 2px 8px;
-  border: 1px solid #ef4444;
-  border-radius: 2px;
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-sm);
   font-size: 11px;
-  color: #ef4444;
-  background: #fff;
+  color: var(--color-error);
+  background: var(--color-input-bg);
   cursor: pointer;
 }
-.tp-clear-btn:hover { background: #fef2f2; }
+.tp-clear-btn:hover { background: var(--color-error-light); }
 
 /* 标签列表 */
 .tp-tag-list {
@@ -874,24 +918,24 @@ const showTagPanel = ref(true)
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  color: #374151;
+  color: var(--color-text);
   cursor: pointer;
   user-select: none;
   transition: color 0.12s, background-color 0.12s, border-color 0.12s;
   line-height: 1.3;
   max-width: 100%;
 }
-.tp-tag-chip:hover { background: #f0f4ff; border-color: #93b4f8; }
-.tp-tag-chip.filtered { background: #eff6ff; border-color: #93b4f8; color: #2563eb; }
-.tp-tag-chip.has-tag { background: #f0fdf4; border-color: #86efac; color: #16a34a; }
-.tp-tag-chip.has-tag.filtered { background: #eff6ff; border-color: #93b4f8; color: #2563eb; }
+.tp-tag-chip:hover { background: var(--color-tag-hover-bg); border-color: var(--color-tag-hover-border); }
+.tp-tag-chip.filtered { background: var(--color-tag-filtered-bg); border-color: var(--color-tag-hover-border); color: var(--color-tag-filtered-color); }
+.tp-tag-chip.has-tag { background: var(--color-tag-has-bg); border-color: var(--color-tag-has-border); color: var(--color-tag-has-color); }
+.tp-tag-chip.has-tag.filtered { background: var(--color-tag-filtered-bg); border-color: var(--color-tag-hover-border); color: var(--color-tag-filtered-color); }
 
 .tp-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tp-chip-count { flex-shrink: 0; font-size: 10px; color: #9ca3af; font-weight: 500; }
+.tp-chip-count { flex-shrink: 0; font-size: 10px; color: var(--color-text-muted); font-weight: 500; }
 .tp-chip-del {
   flex-shrink: 0;
   opacity: 0.4;
@@ -899,23 +943,23 @@ const showTagPanel = ref(true)
   cursor: pointer;
 }
 .tp-tag-chip:hover .tp-chip-del { opacity: 1; }
-.tp-chip-del:hover { opacity: 1; stroke: #ef4444; }
+.tp-chip-del:hover { opacity: 1; stroke: var(--color-error); }
 
-.tp-empty { padding: 20px; text-align: center; font-size: 12px; color: #9ca3af; }
+.tp-empty { padding: 20px; text-align: center; font-size: 12px; color: var(--color-text-muted); }
 
 /* ============================================
    右侧编辑面板
    ============================================ */
-.tag-editor-panel { width: 360px; flex-shrink: 0; border-left: 1px solid #e5e7eb; display: flex; flex-direction: column; background: #fff; overflow: hidden; }
+.tag-editor-panel { width: 360px; flex-shrink: 0; border-left: 1px solid var(--color-border); display: flex; flex-direction: column; background: var(--color-input-bg); overflow: hidden; }
 
-.editor-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid #f3f4f6; flex-shrink: 0; }
-.editor-filename { font-size: 13px; font-weight: 500; color: #1b1b1f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.editor-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--color-surface-hover); flex-shrink: 0; }
+.editor-filename { font-size: 13px; font-weight: 500; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .editor-nav { display: flex; gap: 2px; flex-shrink: 0; }
-.editor-nav-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; border-radius: 4px; background: transparent; color: #9ca3af; cursor: pointer; padding: 0; }
-.editor-nav-btn:hover { color: #1b1b1f; background: #f3f4f6; }
-.editor-nav-btn.close:hover { color: #ef4444; background: #fef2f2; }
+.editor-nav-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-muted); cursor: pointer; padding: 0; }
+.editor-nav-btn:hover { color: var(--color-text); background: var(--color-surface-hover); }
+.editor-nav-btn.close:hover { color: var(--color-error); background: var(--color-error-light); }
 
-.editor-preview { flex-shrink: 0; padding: 8px 12px; display: flex; justify-content: center; background: #fafafa; max-height: 240px; }
+.editor-preview { flex-shrink: 0; padding: 8px 12px; display: flex; justify-content: center; background: var(--color-surface-soft); max-height: 240px; }
 .editor-preview img { max-width: 100%; max-height: 220px; object-fit: contain; border-radius: 4px; }
 
 /* 标签芯片区 */
@@ -934,21 +978,21 @@ const showTagPanel = ref(true)
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  background: #f3f4f6;
-  border: 1px solid #e5e7eb;
-  border-radius: 3px;
+  background: var(--color-surface-hover);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  color: #374151;
+  color: var(--color-text);
   cursor: pointer;
   user-select: none;
   transition: color 0.12s, background-color 0.12s, border-color 0.12s;
   line-height: 1.3;
 }
-.tag-chip:hover { background: #fef2f2; border-color: #fca5a5; color: #ef4444; }
+.tag-chip:hover { background: var(--color-error-light); border-color: var(--color-error-border); color: var(--color-error); }
 .tag-chip .chip-x { flex-shrink: 0; opacity: 0.4; }
-.tag-chip:hover .chip-x { opacity: 1; stroke: #ef4444; }
+.tag-chip:hover .chip-x { opacity: 1; stroke: var(--color-error); }
 
-.chips-empty { font-size: 12px; color: #9ca3af; }
+.chips-empty { font-size: 12px; color: var(--color-text-muted); }
 
 /* 自定义标签输入 */
 .custom-tag-row { display: flex; gap: 6px; margin-top: 6px; }
@@ -956,35 +1000,35 @@ const showTagPanel = ref(true)
   flex: 1;
   height: 30px;
   padding: 0 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   border-radius: 2px;
   font-size: 12px;
-  color: #1b1b1f;
+  color: var(--color-text);
   outline: none;
   box-sizing: border-box;
 }
-.custom-tag-input:focus { border-color: #1b1b1f; }
+.custom-tag-input:focus { border-color: var(--color-text); }
 .custom-tag-add {
   padding: 0 12px;
   height: 30px;
-  border: 1px solid #1b1b1f;
-  border-radius: 2px;
-  background: #1b1b1f;
-  color: #fff;
+  border: 1px solid var(--color-active-bg);
+  border-radius: var(--radius-sm);
+  background: var(--color-active-bg);
+  color: var(--color-active-text);
   font-size: 12px;
   cursor: pointer;
   flex-shrink: 0;
 }
-.custom-tag-add:hover { background: #333; }
+.custom-tag-add:hover { background: var(--color-text-secondary); }
 .custom-tag-add:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 原始文本区 */
 .editor-raw-section { flex: 1; min-height: 0; padding: 8px 12px; overflow-y: auto; }
-.editor-textarea { width: 100%; min-height: 60px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px; font-size: 12px; line-height: 1.6; color: #1b1b1f; resize: vertical; outline: none; font-family: inherit; box-sizing: border-box; }
-.editor-textarea:focus { border-color: #1b1b1f; }
+.editor-textarea { width: 100%; min-height: 60px; padding: 8px; border: 1px solid var(--color-border); border-radius: 4px; font-size: 12px; line-height: 1.6; color: var(--color-text); resize: vertical; outline: none; font-family: inherit; box-sizing: border-box; }
+.editor-textarea:focus { border-color: var(--color-text); }
 
-.editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 10px 12px; border-top: 1px solid #f3f4f6; flex-shrink: 0; }
-.editor-dirty-hint { font-size: 12px; color: #f59e0b; }
+.editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--color-surface-hover); flex-shrink: 0; }
+.editor-dirty-hint { font-size: 12px; color: var(--color-warning); }
 
 /* 面板滑入动画 */
 .tag-editor-panel { transform-origin: right center; }
@@ -994,42 +1038,42 @@ const showTagPanel = ref(true)
 /* ===== 标签面板底部批量编辑 ===== */
 .tp-batch {
   flex-shrink: 0;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--color-border);
   padding: 8px 10px 10px;
-  background: #fff;
+  background: var(--color-input-bg);
 }
 .tp-batch-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.tp-batch-title { font-size: 12px; font-weight: 600; color: #1b1b1f; }
-.tp-batch-scope { font-size: 11px; color: #9ca3af; }
+.tp-batch-title { font-size: 12px; font-weight: 600; color: var(--color-text); }
+.tp-batch-scope { font-size: 11px; color: var(--color-text-muted); }
 .tp-batch-modes { display: flex; gap: 4px; margin-bottom: 6px; }
 .tp-batch-input-row { display: flex; gap: 6px; margin-top: 4px; }
 .tp-batch-input {
   flex: 1;
   height: 28px;
   padding: 0 8px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   border-radius: 2px;
   font-size: 12px;
-  color: #1b1b1f;
+  color: var(--color-text);
   outline: none;
   box-sizing: border-box;
   min-width: 0;
 }
-.tp-batch-input:focus { border-color: #1b1b1f; }
+.tp-batch-input:focus { border-color: var(--color-text); }
 .tp-batch-run {
   flex-shrink: 0;
   padding: 0 12px;
   height: 28px;
-  border: 1px solid #1b1b1f;
-  border-radius: 2px;
-  background: #1b1b1f;
-  color: #fff;
+  border: 1px solid var(--color-active-bg);
+  border-radius: var(--radius-sm);
+  background: var(--color-active-bg);
+  color: var(--color-active-text);
   font-size: 12px;
   cursor: pointer;
 }
-.tp-batch-run:hover { background: #333; }
+.tp-batch-run:hover { background: var(--color-text-secondary); }
 .tp-batch-run:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 标签面板按钮高亮 */
-.bar-icon-btn.active { color: #3b82f6; background: #eff6ff; }
+.bar-icon-btn.active { color: var(--color-info); background: var(--color-info-light); }
 </style>

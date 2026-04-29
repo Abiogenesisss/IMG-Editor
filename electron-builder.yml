@@ -68,6 +68,8 @@ extraResources:
       - '**/*'
       - '!__pycache__'
       - '!**/__pycache__'
+      - '!models/tagger'
+      - '!models/tagger/**'
 asarUnpack:
   - resources/**
 win:

@@ -4,6 +4,8 @@ import os
 import numpy as np
 from PIL import Image
 
+from tasks.gpu_config import get_onnx_providers
+
 # 每个 worker 进程缓存检测器，只加载一次
 _detector = None
 
@@ -12,8 +14,9 @@ def _get_detector():
     global _detector
     if _detector is None:
         from insightface.app import FaceAnalysis
+        providers = get_onnx_providers()
         _detector = FaceAnalysis(
-            providers=['CPUExecutionProvider'],
+            providers=providers,
             allowed_modules=['detection']
         )
         _detector.prepare(ctx_id=0, det_size=(640, 640))

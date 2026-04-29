@@ -1,6 +1,8 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
+import FolderRow from '../components/FolderRow.vue'
+import ImageStatusBar from '../components/ImageStatusBar.vue'
 
 const {
   inputFolder,
@@ -14,6 +16,7 @@ const {
   chooseInputFolder,
   chooseOutputFolder,
   loadInputFolder,
+  clearCurrentFolder,
   toggleSelect,
   toggleSelectAll,
   isSelected,
@@ -33,7 +36,7 @@ const {
 
 const gridRef = ref(null)
 onMounted(() => { if (gridRef.value) observeGrid(gridRef.value) })
-watch(imageCount, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
+watch(() => images.value, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
 
 const activePanel = ref(null)
 
@@ -54,7 +57,9 @@ async function doPreview(augType, params) {
   if (!file) return
   augPreviewLoading.value = true
   try {
-    const result = await window.api.previewAugment(file, augType, params)
+    const result = await window.api.callPython('/preview-augment', {
+      file: file, aug_type: augType, params
+    })
     if (result.ok) {
       augPreviewData.value = result.data
     }
@@ -65,6 +70,13 @@ async function doPreview(augType, params) {
 
 function closeAugPreview() {
   augPreviewData.value = null
+}
+
+function clearAugmentFolder() {
+  activePanel.value = null
+  augPreviewData.value = null
+  augPreviewLoading.value = false
+  clearCurrentFolder()
 }
 
 // --- 通用任务执行器 ---
@@ -83,7 +95,9 @@ async function runTask(actionName, apiFn) {
 // --- 镜像翻转 ---
 function mirrorFlip() {
   runTask('mirrorFlip', (outDir) =>
-    window.api.mirrorFlip([...selectedImages.value], outDir)
+    window.api.callPython('/mirror-flip', {
+      files: [...selectedImages.value], output_dir: outDir
+    })
   )
 }
 
@@ -94,10 +108,10 @@ const headConf = ref(0.3)
 
 function runThreeStageSplit() {
   runTask('split', (outDir) =>
-    window.api.threeStageSplit(
-      [...selectedImages.value], outDir,
-      personConf.value, halfbodyConf.value, headConf.value
-    )
+    window.api.callPython('/three-stage-split', {
+      files: [...selectedImages.value], output_dir: outDir,
+      person_conf: personConf.value, halfbody_conf: halfbodyConf.value, head_conf: headConf.value
+    })
   )
 }
 
@@ -107,10 +121,10 @@ const cutoutSize = ref(0.15)
 
 function runCutout() {
   runTask('cutout', (outDir) =>
-    window.api.cutout(
-      [...selectedImages.value], outDir,
-      cutoutCount.value, cutoutSize.value
-    )
+    window.api.callPython('/cutout', {
+      files: [...selectedImages.value], output_dir: outDir,
+      count: cutoutCount.value, size_ratio: cutoutSize.value
+    })
   )
 }
 
@@ -123,10 +137,10 @@ const perspIntensity = ref(0.1)
 
 function runPerspective() {
   runTask('perspective', (outDir) =>
-    window.api.perspective(
-      [...selectedImages.value], outDir,
-      perspIntensity.value
-    )
+    window.api.callPython('/perspective', {
+      files: [...selectedImages.value], output_dir: outDir,
+      intensity: perspIntensity.value
+    })
   )
 }
 
@@ -140,10 +154,10 @@ const noiseSigma = ref(15.0)
 
 function runGaussianBlurNoise() {
   runTask('blurnoise', (outDir) =>
-    window.api.gaussianBlurNoise(
-      [...selectedImages.value], outDir,
-      blurRadius.value, noiseSigma.value
-    )
+    window.api.callPython('/gaussian-blur-noise', {
+      files: [...selectedImages.value], output_dir: outDir,
+      blur_radius: blurRadius.value, noise_sigma: noiseSigma.value
+    })
   )
 }
 
@@ -162,26 +176,20 @@ function previewBlurNoise() {
     <!-- 顶部：文件夹选择 + 操作按钮 -->
     <div class="process-toolbar">
       <div class="folder-section">
-        <div class="folder-row">
-          <span class="folder-label">输入</span>
-          <input
-            class="folder-input"
-            :value="inputFolder"
-            placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
-            @change="e => e.target.value.trim() && loadInputFolder(e.target.value.trim())"
-          />
-          <button class="folder-browse-btn" @click="chooseInputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
-        </div>
-        <div class="folder-row">
-          <span class="folder-label">输出</span>
-          <input
-            class="folder-input"
-            :value="outputFolder"
-            :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
-            @change="e => outputFolder = e.target.value.trim()"
-          />
-          <button class="folder-browse-btn" @click="chooseOutputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
-        </div>
+        <FolderRow
+          v-model="inputFolder"
+          label="输入"
+          placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
+          @commit="path => path && loadInputFolder(path)"
+          @browse="chooseInputFolder"
+        />
+        <FolderRow
+          v-model="outputFolder"
+          label="输出"
+          :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
+          @commit="path => { outputFolder = path }"
+          @browse="chooseOutputFolder"
+        />
       </div>
       <div class="action-section">
         <div class="action-item">
@@ -301,43 +309,21 @@ function previewBlurNoise() {
     </div>
 
     <!-- 状态栏 -->
-    <div v-if="imageCount > 0" class="status-bar">
-      <label class="select-all-label" @click="toggleSelectAll">
-        <span :class="['checkbox', { checked: selectAll }]"></span>
-        全选
-      </label>
-      <div class="bar-btn-group">
-        <button :class="['bar-icon-btn', { spinning: refreshing }]" title="刷新" @click="refreshImages">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <polyline points="1 20 1 14 7 14"></polyline>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
-            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
-          </svg>
-        </button>
-        <button class="bar-icon-btn delete" title="删除选中图片" :disabled="selectedCount === 0" @click="deleteSelected">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
-            <path d="M10 11v6"></path>
-            <path d="M14 11v6"></path>
-          </svg>
-        </button>
-      </div>
-      <span v-if="processingAction && progressTotal > 0" class="status-progress">
-        <span class="progress-bar-track">
-          <span class="progress-bar-fill" :style="{ width: (progressDone / progressTotal * 100) + '%' }"></span>
-        </span>
-        <span class="progress-text">{{ progressDone }} / {{ progressTotal }}</span>
-        <button class="abort-btn" title="终止任务" @click="abortTask">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </span>
-      <span v-else class="status-text">共 {{ imageCount }} 张，已选 {{ selectedCount }} 张</span>
-    </div>
+    <ImageStatusBar
+      :image-count="imageCount"
+      :selected-count="selectedCount"
+      :select-all="selectAll"
+      :refreshing="refreshing"
+      :processing-action="processingAction"
+      :progress-done="progressDone"
+      :progress-total="progressTotal"
+      processing-label="增强"
+      @toggle-select-all="toggleSelectAll"
+      @refresh="refreshImages"
+      @clear-folder="clearAugmentFolder"
+      @delete-selected="deleteSelected"
+      @abort="abortTask"
+    />
 
     <!-- 图片网格 -->
     <div v-if="imageCount > 0" ref="gridRef" class="image-grid">
@@ -398,9 +384,14 @@ function previewBlurNoise() {
 }
 
 .panel-preview {
-  padding: 5px 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ui-panel-run-width);
+  height: var(--ui-panel-run-height);
+  padding: 0 10px;
   border: 1px solid #e5e7eb;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   background: #fff;
   color: #1b1b1f;
   font-size: 12px;

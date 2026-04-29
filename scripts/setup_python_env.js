@@ -15,8 +15,6 @@
 import { execSync } from 'child_process'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { pipeline } from 'stream/promises'
-import { createUnzip } from 'zlib'
 import https from 'https'
 import http from 'http'
 

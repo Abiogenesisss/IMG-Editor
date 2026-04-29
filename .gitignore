@@ -10,3 +10,8 @@ python_backend/models
 python_backend/waifu2x/pretrained_models
 python_backend/nunif/modules/_alex11.pth
 .vs
+build
+workflow_runs/
+.env
+.env.*
+backups/

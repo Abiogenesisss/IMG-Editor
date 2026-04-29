@@ -12,8 +12,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-_device = "cuda:0" if torch.cuda.is_available() else "cpu"
-_half = torch.cuda.is_available()
+from tasks.gpu_config import get_device, get_half
 
 
 # ===================================================================
@@ -94,7 +93,7 @@ def _cugan_get_upscaler(scale, denoise):
     weight_path = os.path.join(_CUGAN_MODELS_DIR, filename)
     if not os.path.exists(weight_path):
         raise FileNotFoundError(f"权重文件不存在: {weight_path}")
-    upscaler = RealWaifuUpScaler(scale, weight_path, half=_half, device=_device)
+    upscaler = RealWaifuUpScaler(scale, weight_path, half=get_half(), device=get_device())
     _cugan_cache[key] = upscaler
     return upscaler
 
@@ -144,8 +143,8 @@ def _esrgan_load():
         state_dict = loadnet
     model.load_state_dict(state_dict, strict=True)
     model.eval()
-    model = model.to(_device)
-    if _half:
+    model = model.to(get_device())
+    if get_half():
         model = model.half()
     _esrgan_model = model
     return model
@@ -159,8 +158,8 @@ def _esrgan_upscale(pil_img, scale, denoise):
     model = _esrgan_load()
     img_rgb = np.array(pil_img.convert("RGB")).astype(np.float32) / 255.0
     # HWC -> BCHW
-    tensor = torch.from_numpy(np.transpose(img_rgb, (2, 0, 1))).unsqueeze(0).to(_device)
-    if _half:
+    tensor = torch.from_numpy(np.transpose(img_rgb, (2, 0, 1))).unsqueeze(0).to(get_device())
+    if get_half():
         tensor = tensor.half()
 
     with torch.no_grad():
@@ -239,7 +238,7 @@ def _w2x_get_model(model_type, method, noise_level):
         keep_alpha=True,
         amp=True,
     )
-    model = model.to(_device)
+    model = model.to(get_device())
 
     _w2x_model_cache[key] = model
     return model

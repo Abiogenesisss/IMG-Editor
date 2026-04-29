@@ -1,6 +1,10 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
+import FolderRow from '../components/FolderRow.vue'
+import IconButton from '../components/IconButton.vue'
+import ImageStatusBar from '../components/ImageStatusBar.vue'
+import { X } from 'lucide-vue-next'
 
 defineOptions({ name: 'ImageUpscale' })
 
@@ -16,6 +20,7 @@ const {
   chooseInputFolder,
   chooseOutputFolder,
   loadInputFolder,
+  clearCurrentFolder,
   toggleSelect,
   toggleSelectAll,
   isSelected,
@@ -35,7 +40,7 @@ const {
 
 const gridRef = ref(null)
 onMounted(() => { if (gridRef.value) observeGrid(gridRef.value) })
-watch(imageCount, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
+watch(() => images.value, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
 
 // --- 面板控制 ---
 const activePanel = ref(null)
@@ -184,10 +189,10 @@ async function doUpscalePreview() {
   if (!file) return
   upscalePreviewLoading.value = true
   try {
-    const result = await window.api.previewUpscale(
-      file, scale.value, denoise.value, model.value,
-      w2xStyle.value, tta.value
-    )
+    const result = await window.api.callPython('/preview-upscale', {
+      file: file, scale: scale.value, denoise: denoise.value,
+      model: model.value, style: w2xStyle.value, tta: tta.value
+    })
     if (result.ok) {
       upscalePreviewData.value = result
       sliderPos.value = 50
@@ -199,6 +204,15 @@ async function doUpscalePreview() {
 
 function closeUpscalePreview() {
   upscalePreviewData.value = null
+}
+
+function clearUpscaleFolder() {
+  activePanel.value = null
+  denoiseDropOpen.value = false
+  upscalePreviewData.value = null
+  upscalePreviewLoading.value = false
+  sliderPos.value = 50
+  clearCurrentFolder()
 }
 
 // --- 叠图模式拖拽 ---
@@ -237,10 +251,10 @@ async function runUpscale() {
   processingAction.value = 'upscale'
   try {
     const files = selectedCount.value > 0 ? [...selectedImages.value] : images.value.map(i => i.path)
-    const result = await window.api.upscale(
-      files, outDir, scale.value, denoise.value, model.value,
-      w2xStyle.value, tta.value
-    )
+    const result = await window.api.callPython('/upscale', {
+      files: files, output_dir: outDir, scale: scale.value, denoise: denoise.value,
+      model: model.value || 'real-cugan', style: w2xStyle.value || 'art', tta: tta.value || false
+    })
     if (result.aborted) return
   } finally {
     if (processingAction.value === 'upscale') processingAction.value = null
@@ -259,26 +273,20 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
     <!-- 顶部：文件夹选择 + 操作按钮 -->
     <div class="process-toolbar">
       <div class="folder-section">
-        <div class="folder-row">
-          <span class="folder-label">输入</span>
-          <input
-            class="folder-input"
-            :value="inputFolder"
-            placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
-            @change="e => e.target.value.trim() && loadInputFolder(e.target.value.trim())"
-          />
-          <button class="folder-browse-btn" @click="chooseInputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
-        </div>
-        <div class="folder-row">
-          <span class="folder-label">输出</span>
-          <input
-            class="folder-input"
-            :value="outputFolder"
-            :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
-            @change="e => outputFolder = e.target.value.trim()"
-          />
-          <button class="folder-browse-btn" @click="chooseOutputFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></button>
-        </div>
+        <FolderRow
+          v-model="inputFolder"
+          label="输入"
+          placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
+          @commit="path => path && loadInputFolder(path)"
+          @browse="chooseInputFolder"
+        />
+        <FolderRow
+          v-model="outputFolder"
+          label="输出"
+          :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
+          @commit="path => { outputFolder = path }"
+          @browse="chooseOutputFolder"
+        />
       </div>
       <div class="action-section">
         <!-- 参数设置 -->
@@ -408,43 +416,21 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
     </div>
 
     <!-- 状态栏 -->
-    <div v-if="imageCount > 0" class="status-bar">
-      <label class="select-all-label" @click="toggleSelectAll">
-        <span :class="['checkbox', { checked: selectAll }]"></span>
-        全选
-      </label>
-      <div class="bar-btn-group">
-        <button :class="['bar-icon-btn', { spinning: refreshing }]" title="刷新" @click="refreshImages">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <polyline points="1 20 1 14 7 14"></polyline>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
-            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
-          </svg>
-        </button>
-        <button class="bar-icon-btn delete" title="删除选中图片" :disabled="selectedCount === 0" @click="deleteSelected">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
-            <path d="M10 11v6"></path>
-            <path d="M14 11v6"></path>
-          </svg>
-        </button>
-      </div>
-      <span v-if="processingAction && progressTotal > 0" class="status-progress">
-        <span class="progress-bar-track">
-          <span class="progress-bar-fill" :style="{ width: (progressDone / progressTotal * 100) + '%' }"></span>
-        </span>
-        <span class="progress-text">{{ progressDone }} / {{ progressTotal }}</span>
-        <button class="abort-btn" title="终止任务" @click="abortTask">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </span>
-      <span v-else class="status-text">共 {{ imageCount }} 张，已选 {{ selectedCount }} 张</span>
-    </div>
+    <ImageStatusBar
+      :image-count="imageCount"
+      :selected-count="selectedCount"
+      :select-all="selectAll"
+      :refreshing="refreshing"
+      :processing-action="processingAction"
+      :progress-done="progressDone"
+      :progress-total="progressTotal"
+      processing-label="超分"
+      @toggle-select-all="toggleSelectAll"
+      @refresh="refreshImages"
+      @clear-folder="clearUpscaleFolder"
+      @delete-selected="deleteSelected"
+      @abort="abortTask"
+    />
 
     <!-- 图片网格 -->
     <div v-if="imageCount > 0" ref="gridRef" class="image-grid">
@@ -561,12 +547,13 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
           </div>
 
           <!-- 关闭按钮 -->
-          <button class="preview-close-btn" @click="closeUpscalePreview">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
+          <IconButton
+            :icon="X"
+            variant="preview-close-btn"
+            title="关闭"
+            :size="20"
+            @click="closeUpscalePreview"
+          />
           <div class="preview-filename">点击空白区域关闭</div>
         </div>
       </Transition>
@@ -611,7 +598,7 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   justify-content: space-between;
   padding: 5px 10px;
   border: 1px solid #e5e7eb;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   color: #1b1b1f;
   background: #fff;
@@ -703,37 +690,39 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 6px 0;
+  min-height: 36px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 
 .preview-mode-label {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   white-space: nowrap;
 }
 
 .preview-mode-tag {
   padding: 4px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   cursor: pointer;
   user-select: none;
   transition: color 0.12s, background 0.12s, border-color 0.12s;
-  background: #fff;
+  background: var(--color-surface);
 }
 
 .preview-mode-tag:hover {
-  border-color: #b0b0b0;
+  border-color: var(--color-border-hover);
 }
 
 .preview-mode-tag.active {
-  background: #1b1b1f;
-  border-color: #1b1b1f;
-  color: #fff;
+  background: var(--color-active-bg);
+  border-color: var(--color-active-bg);
+  color: var(--color-active-text);
 }
 
 /* ===== 预览遮罩内浮动模式切换 ===== */
@@ -916,7 +905,7 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   right: 16px;
   width: 36px;
   height: 36px;
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   border: none;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;

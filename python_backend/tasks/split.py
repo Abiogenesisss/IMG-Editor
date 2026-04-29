@@ -5,6 +5,8 @@ import json
 import numpy as np
 from PIL import Image
 
+from tasks.gpu_config import get_onnx_providers
+
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MODELS_DIR = os.path.join(_BACKEND_DIR, "models")
 
@@ -36,11 +38,7 @@ def _load_session(model_path):
             "请确认 python_backend/models/ 下存在对应的 .onnx 文件"
         )
 
-    available = ort.get_available_providers()
-    providers = []
-    if "CUDAExecutionProvider" in available:
-        providers.append("CUDAExecutionProvider")
-    providers.append("CPUExecutionProvider")
+    providers = get_onnx_providers()
 
     options = ort.SessionOptions()
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
