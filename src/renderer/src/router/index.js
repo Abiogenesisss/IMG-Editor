@@ -36,6 +36,11 @@ const routes = [
     component: () => import('../views/ImageCaption.vue')
   },
   {
+    path: '/buckets',
+    name: 'BucketBalancer',
+    component: () => import('../views/BucketBalancer.vue')
+  },
+  {
     path: '/workflow',
     name: 'WorkflowCanvas',
     component: () => import('../views/WorkflowCanvas.vue')

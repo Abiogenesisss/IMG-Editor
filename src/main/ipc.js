@@ -4,6 +4,7 @@ import sharp from 'sharp'
 import { join, extname, dirname, basename } from 'path'
 import { spawn, execSync, spawnSync } from 'child_process'
 import { randomBytes } from 'crypto'
+import { pathToFileURL } from 'url'
 import { grantLocalFileAccess } from './localFileAccess'
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif', '.avif'])
@@ -73,6 +74,17 @@ let pythonPort = null
 let startingPromise = null
 const pythonAuthToken = randomBytes(32).toString('hex')
 const API_CONFIGS_FILE = 'api-configs.secure.json'
+const thumbnailCache = new Map()
+const THUMBNAIL_CACHE_LIMIT = 1200
+
+function rememberThumbnail(filePath, dataUrl) {
+  if (thumbnailCache.has(filePath)) thumbnailCache.delete(filePath)
+  thumbnailCache.set(filePath, dataUrl)
+  while (thumbnailCache.size > THUMBNAIL_CACHE_LIMIT) {
+    const firstKey = thumbnailCache.keys().next().value
+    thumbnailCache.delete(firstKey)
+  }
+}
 
 function canRunPython(command, args = []) {
   try {
@@ -87,25 +99,62 @@ function canRunPython(command, args = []) {
   }
 }
 
-function resolvePythonRuntime() {
+function isWindowsAppPython(command) {
+  return String(command || '').replace(/\//g, '\\').toLowerCase().includes('\\microsoft\\windowsapps\\')
+}
+
+function registeredPythonCandidates() {
+  if (process.platform !== 'win32') return []
+  const roots = [
+    'HKCU\\Software\\Python\\PythonCore',
+    'HKLM\\Software\\Python\\PythonCore',
+    'HKLM\\Software\\WOW6432Node\\Python\\PythonCore'
+  ]
+  const candidates = []
+
+  for (const root of roots) {
+    const result = spawnSync('reg.exe', ['query', root, '/s', '/v', 'ExecutablePath'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 3000
+    })
+    if (result.error || result.status !== 0) continue
+
+    for (const line of String(result.stdout || '').split(/\r?\n/)) {
+      const match = line.match(/ExecutablePath\s+REG_\w+\s+(.+)$/)
+      const command = match?.[1]?.trim()
+      if (command && !isWindowsAppPython(command)) {
+        candidates.push({ command, args: [] })
+      }
+    }
+  }
+
+  return candidates
+}
+
+function resolvePythonCandidates() {
   const candidates = []
 
   if (process.platform === 'win32') {
-    if (app.isPackaged) {
-      candidates.push({
-        command: join(process.resourcesPath, 'python_backend', 'python_embed', 'python.exe'),
-        args: [],
-      })
-    }
-    candidates.push(
-      {
-        command: join(app.getAppPath(), 'python_backend', 'python_embed', 'python.exe'),
-        args: [],
-      },
+    const systemCandidates = [
+      ...registeredPythonCandidates(),
       { command: 'py', args: ['-3'] },
       { command: 'python', args: [] },
       { command: 'python3', args: [] }
-    )
+    ]
+    if (app.isPackaged) {
+      candidates.push(...systemCandidates)
+      candidates.push({
+        command: join(process.resourcesPath, 'python_backend', 'python_embed', 'python.exe'),
+        args: []
+      })
+    } else {
+      candidates.push(...systemCandidates)
+      candidates.push({
+        command: join(app.getAppPath(), 'python_backend', 'python_embed', 'python.exe'),
+        args: []
+      })
+    }
   } else {
     candidates.push(
       { command: 'python3', args: [] },
@@ -113,27 +162,38 @@ function resolvePythonRuntime() {
     )
   }
 
-  for (const candidate of candidates) {
-    if (canRunPython(candidate.command, candidate.args)) {
-      return candidate
-    }
-  }
-
-  return candidates[0]
+  const seen = new Set()
+  return candidates.filter((candidate) => {
+    const key = [candidate.command, ...(candidate.args || [])].join('\0').toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return canRunPython(candidate.command, candidate.args)
+  })
 }
 
-function startPythonBackend() {
-  if (startingPromise) return startingPromise
-  if (pythonPort) return Promise.resolve(pythonPort)
+function formatPythonCommand(candidate) {
+  return [candidate.command, ...(candidate.args || [])].join(' ')
+}
 
-  startingPromise = new Promise((resolve, reject) => {
-    const backendDir = app.isPackaged
-      ? join(process.resourcesPath, 'python_backend')
-      : join(app.getAppPath(), 'python_backend')
-    const scriptPath = join(backendDir, 'server.py')
-    const pythonRuntime = resolvePythonRuntime()
-    const pythonCommandText = [pythonRuntime.command, ...(pythonRuntime.args || [])].join(' ')
-    const py = spawn(pythonRuntime.command, [...(pythonRuntime.args || []), scriptPath], {
+function buildPythonStartupError(message, attempts) {
+  const hint =
+    process.platform === 'win32'
+      ? '请确认系统 Python 已安装所需依赖，或准备 python_backend/python_embed 基础运行时。'
+      : '请确认 Python 3 已安装所需依赖。'
+  const details = attempts
+    .map((attempt) => {
+      const error = attempt.error ? `\n${attempt.error}` : ''
+      return `启动命令: ${attempt.command}${error}`
+    })
+    .join('\n\n')
+  return [message, hint, details].filter(Boolean).join('\n')
+}
+
+function startPythonCandidate(candidate, scriptPath, attempts) {
+  const pythonCommandText = formatPythonCommand(candidate)
+
+  return new Promise((resolve, reject) => {
+    const py = spawn(candidate.command, [...(candidate.args || []), scriptPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
@@ -147,24 +207,26 @@ function startPythonBackend() {
     let resolved = false
     let stderrBuffer = ''
 
-    const buildPythonStartupError = (message) => {
-      const hint = process.platform === 'win32'
-        ? '请先运行 `npm run setup:python` 准备 python_backend/python_embed，或安装 Python 3 并加入 PATH。'
-        : '请先安装 Python 3，或提供可用的 Python 可执行文件。'
-      const details = stderrBuffer.trim()
-      return [message, `启动命令: ${pythonCommandText}`, hint, details].filter(Boolean).join('\n')
+    const fail = (error) => {
+      attempts.push({ command: pythonCommandText, error })
+      reject(new Error(error))
     }
 
     const timer = setTimeout(() => {
       if (!resolved) {
         resolved = true
-        reject(new Error(buildPythonStartupError('Python 后端启动超时，未能正常返回端口。')))
+        try {
+          py.kill()
+        } catch {
+          /* ignore */
+        }
+        pythonProcess = null
+        fail('Python 后端启动超时，未能正常返回端口。')
       }
     }, 10000)
 
     py.stdout.on('data', (data) => {
       const msg = data.toString().trim()
-      // 后端启动后会输出 "PORT:xxxxx"
       const portMatch = msg.match(/^PORT:(\d+)/)
       if (portMatch && !resolved) {
         resolved = true
@@ -186,7 +248,7 @@ function startPythonBackend() {
       if (!resolved) {
         resolved = true
         clearTimeout(timer)
-        reject(new Error(buildPythonStartupError(`Python 后端启动失败: ${err.message}`)))
+        fail(`Python 后端启动失败: ${err.message}`)
       }
     })
 
@@ -197,10 +259,41 @@ function startPythonBackend() {
       if (!resolved) {
         resolved = true
         clearTimeout(timer)
-        reject(new Error(buildPythonStartupError(`Python 进程意外退出，code: ${code}`)))
+        const details = stderrBuffer.trim()
+        fail([`Python 进程意外退出，code: ${code}`, details].filter(Boolean).join('\n'))
       }
     })
-  }).finally(() => {
+  })
+}
+
+async function startPythonBackendImpl() {
+  const backendDir = app.isPackaged
+    ? join(process.resourcesPath, 'python_backend')
+    : join(app.getAppPath(), 'python_backend')
+  const scriptPath = join(backendDir, 'server.py')
+  const candidates = resolvePythonCandidates()
+  const attempts = []
+
+  if (candidates.length === 0) {
+    throw new Error(buildPythonStartupError('未找到可执行的 Python 运行时。', attempts))
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return await startPythonCandidate(candidate, scriptPath, attempts)
+    } catch {
+      // Try the next Python runtime.
+    }
+  }
+
+  throw new Error(buildPythonStartupError('Python 后端启动失败，所有候选 Python 都不可用。', attempts))
+}
+
+function startPythonBackend() {
+  if (startingPromise) return startingPromise
+  if (pythonPort) return Promise.resolve(pythonPort)
+
+  startingPromise = startPythonBackendImpl().finally(() => {
     startingPromise = null
   })
 
@@ -885,7 +978,256 @@ function isImageFileName(name) {
 }
 
 function toLocalFileUrl(filePath) {
-  return `local-file:///${filePath.replace(/\\/g, '/')}`
+  return pathToFileURL(filePath).toString().replace(/^file:/, 'local-file:')
+}
+
+function clampNumber(value, fallback, min = -Infinity, max = Infinity) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, n))
+}
+
+function quantile(sortedValues, q) {
+  if (!sortedValues.length) return 0
+  const pos = (sortedValues.length - 1) * q
+  const base = Math.floor(pos)
+  const rest = pos - base
+  const next = sortedValues[base + 1]
+  if (next === undefined) return sortedValues[base]
+  return sortedValues[base] + rest * (next - sortedValues[base])
+}
+
+function roundToNearestMultiple(value, multiple) {
+  return Math.max(multiple, Math.round(value / multiple) * multiple)
+}
+
+function gcd(a, b) {
+  let x = Math.abs(Math.round(a))
+  let y = Math.abs(Math.round(b))
+  while (y) {
+    const next = x % y
+    x = y
+    y = next
+  }
+  return x || 1
+}
+
+function approximateRatio(ar, maxDenominator = 16) {
+  let best = { w: 1, h: 1, ar: 1, error: Math.abs(ar - 1) }
+  for (let h = 1; h <= maxDenominator; h += 1) {
+    const w = Math.max(1, Math.round(ar * h))
+    const candidateAr = w / h
+    const error = Math.abs(candidateAr - ar)
+    if (error < best.error) {
+      const div = gcd(w, h)
+      best = { w: w / div, h: h / div, ar: candidateAr, error }
+    }
+  }
+  return best
+}
+
+function collectRatioBuckets(images, options) {
+  const maxDenominator = Math.max(2, Math.round(clampNumber(options.maxRatioDenominator, 16, 2, 200)))
+  const groups = new Map()
+
+  for (const image of images) {
+    const ratio = approximateRatio(image.ar, maxDenominator)
+    const key = `${ratio.w}:${ratio.h}`
+    const existing = groups.get(key) || {
+      w: ratio.w,
+      h: ratio.h,
+      targetAr: ratio.w / ratio.h,
+      count: 0,
+      examples: []
+    }
+    existing.count += 1
+    if (existing.examples.length < 5) {
+      existing.examples.push({
+        name: image.name,
+        width: image.width,
+        height: image.height,
+        ar: image.ar
+      })
+    }
+    groups.set(key, existing)
+  }
+
+  return [...groups.values()].sort((a, b) => a.targetAr - b.targetAr)
+}
+
+function sizeBucketForAr(ar, baseResolution, bucketStep) {
+  const area = baseResolution * baseResolution
+  const width = roundToNearestMultiple(Math.sqrt(area * ar), bucketStep)
+  const height = roundToNearestMultiple(area / Math.sqrt(area * ar), bucketStep)
+  return { width, height, actualAr: width / height }
+}
+
+function simulateTrainingBuckets(images, options) {
+  const minAr = clampNumber(options.minAr, 0.5, 0.01, 100)
+  const maxAr = clampNumber(options.maxAr, 2.0, minAr, 100)
+  const baseResolution = Math.max(64, Math.round(clampNumber(options.baseResolution, 1024, 64, 8192)))
+  const bucketStep = Math.max(1, Math.round(clampNumber(options.bucketStep, 16, 1, 1024)))
+  const batchSize = Math.max(1, Math.round(clampNumber(options.batchSize, 4, 1, 1000000)))
+  const exactRatios = collectRatioBuckets(images, options)
+
+  const buckets = exactRatios.map((ratio, index) => ({
+    index,
+    targetAr: ratio.targetAr,
+    ratio: [ratio.w, ratio.h],
+    ratioLabel: `${ratio.w}:${ratio.h}`,
+    ...sizeBucketForAr(ratio.targetAr, baseResolution, bucketStep),
+    count: 0,
+    used: 0,
+    dropped: 0,
+    examples: [],
+    images: []
+  }))
+
+  for (const image of images) {
+    const logAr = Math.log(image.ar)
+    let bestIndex = 0
+    let bestDiff = Infinity
+    for (let i = 0; i < buckets.length; i += 1) {
+      const diff = Math.abs(logAr - Math.log(buckets[i].targetAr))
+      if (diff < bestDiff) {
+        bestDiff = diff
+        bestIndex = i
+      }
+    }
+    const bucket = buckets[bestIndex]
+    bucket.count += 1
+    bucket.images.push({
+      name: image.name,
+      path: image.path,
+      url: image.url,
+      width: image.width,
+      height: image.height,
+      ar: image.ar
+    })
+    if (bucket.examples.length < 5) {
+      bucket.examples.push({
+        name: image.name,
+        width: image.width,
+        height: image.height,
+        ar: image.ar
+      })
+    }
+  }
+
+  for (const bucket of buckets) {
+    bucket.used = Math.floor(bucket.count / batchSize) * batchSize
+    bucket.dropped = bucket.count - bucket.used
+  }
+
+  const nonEmptyBuckets = buckets.filter((bucket) => bucket.count > 0)
+  const usableImages = buckets.reduce((sum, bucket) => sum + bucket.used, 0)
+  const tailDroppedImages = buckets.reduce((sum, bucket) => sum + bucket.dropped, 0)
+
+  return {
+    minAr,
+    maxAr,
+    numArBuckets: exactRatios.length,
+    arBuckets: exactRatios.map((ratio) => [ratio.w, ratio.h]),
+    baseResolution,
+    bucketStep,
+    batchSize,
+    totalImages: images.length,
+    nonEmptyBucketCount: nonEmptyBuckets.length,
+    usableImages,
+    tailDroppedImages,
+    efficiency: images.length ? (usableImages / images.length) * 100 : 0,
+    buckets
+  }
+}
+
+function recommendArRange(images) {
+  const ars = images.map((image) => image.ar).sort((a, b) => a - b)
+  const q05 = quantile(ars, 0.05)
+  const q50 = quantile(ars, 0.5)
+  const q95 = quantile(ars, 0.95)
+  return {
+    q05,
+    q50,
+    q95,
+    minAr: Math.max(0.5, q05 * 0.8),
+    maxAr: Math.min(2.0, q95 * 1.2)
+  }
+}
+
+async function collectImageFiles(folderPath, recursive) {
+  const files = []
+
+  async function visit(dir) {
+    let entries
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (recursive) await visit(fullPath)
+      } else if (entry.isFile() && isImageFileName(entry.name)) {
+        files.push(fullPath)
+      }
+    }
+  }
+
+  await visit(folderPath)
+  return files.sort((a, b) => a.localeCompare(b))
+}
+
+async function readImageDimensions(filePath) {
+  const metadata = await sharp(filePath, { pages: 1, limitInputPixels: false }).metadata()
+  const width = metadata.width || 0
+  const height = metadata.height || 0
+  if (!width || !height) throw new Error('missing image dimensions')
+  return { width, height }
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length)
+  let nextIndex = 0
+  const workerCount = Math.min(limit, items.length)
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex
+      nextIndex += 1
+      results[index] = await mapper(items[index], index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, worker))
+  return results
+}
+
+function buildBucketToml(result) {
+  const arPairs = result.arBuckets?.length
+    ? result.arBuckets.map(([w, h]) => `[${w}, ${h}]`).join(', ')
+    : ''
+  const exactLines = arPairs
+    ? [
+        '# Exact aspect-ratio buckets derived from the dataset.',
+        '# When ar_buckets is set, diffusion-pipe uses these ratios directly.',
+        `ar_buckets = [${arPairs}]`,
+        ''
+      ]
+    : []
+  return [
+    `resolutions = [${result.baseResolution}]`,
+    '',
+    'enable_ar_bucket = true',
+    ...exactLines,
+    arPairs ? '# Kept for GUI compatibility; ar_buckets takes priority.' : '',
+    `min_ar = ${result.minAr.toFixed(3)}`,
+    `max_ar = ${result.maxAr.toFixed(3)}`,
+    `num_ar_buckets = ${result.numArBuckets}`,
+    '',
+    'frame_buckets = [1]'
+  ].filter((line, index, lines) => line !== '' || lines[index - 1] !== '').join('\n')
 }
 
 async function readImagesRecursiveFromDir(folderPath) {
@@ -1010,6 +1352,34 @@ export function registerIPC() {
     return folderPath
   })
 
+  ipcMain.handle('select-file', async (event, options = {}) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openFile'],
+      filters: Array.isArray(options.filters) ? options.filters : undefined
+    })
+    if (result.canceled) return null
+    const filePath = result.filePaths[0]
+    await grantLocalFileAccess(filePath)
+    return filePath
+  })
+
+  ipcMain.handle('save-text-file', async (event, options = {}) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showSaveDialog(win, {
+      defaultPath: options.defaultPath || 'config.toml',
+      filters: Array.isArray(options.filters) ? options.filters : [
+        { name: 'TOML', extensions: ['toml'] },
+        { name: 'Text', extensions: ['txt'] }
+      ]
+    })
+    if (result.canceled || !result.filePath) return { canceled: true }
+    await mkdir(dirname(result.filePath), { recursive: true })
+    await writeFile(result.filePath, String(options.content || ''), 'utf-8')
+    await grantLocalFileAccess(result.filePath)
+    return { canceled: false, filePath: result.filePath }
+  })
+
   // 根据输入目录生成唯一的同级输出目录路径
   ipcMain.handle('resolve-output-dir', async (_event, inputDir) => {
     const parent = dirname(inputDir)
@@ -1074,6 +1444,80 @@ export function registerIPC() {
     }
   })
 
+  ipcMain.handle('analyze-training-buckets', async (_event, options = {}) => {
+    try {
+      const folderPath = String(options.folderPath || '').trim()
+      if (!folderPath) return { success: false, error: '请选择训练集目录' }
+
+      const files = await collectImageFiles(folderPath, options.recursive !== false)
+      if (!files.length) return { success: false, error: '目录中没有找到图片文件' }
+
+      const scanned = await mapWithConcurrency(files, 8, async (filePath) => {
+        try {
+          const { width, height } = await readImageDimensions(filePath)
+          return {
+            ok: true,
+            name: basename(filePath),
+            path: filePath,
+            url: toLocalFileUrl(filePath),
+            width,
+            height,
+            ar: width / height
+          }
+        } catch (err) {
+          return {
+            ok: false,
+            name: basename(filePath),
+            path: filePath,
+            error: err.message
+          }
+        }
+      })
+
+      const images = scanned.filter((item) => item.ok)
+      const skipped = scanned.filter((item) => !item.ok)
+      if (!images.length) return { success: false, error: '图片尺寸读取失败，请检查文件格式' }
+
+      const rangeStats = recommendArRange(images)
+      const minAr = options.useRecommendedRange
+        ? rangeStats.minAr
+        : clampNumber(options.minAr, rangeStats.minAr, 0.01, 100)
+      const maxAr = options.useRecommendedRange
+        ? rangeStats.maxAr
+        : clampNumber(options.maxAr, rangeStats.maxAr, minAr, 100)
+
+      const baseOptions = {
+        ...options,
+        minAr,
+        maxAr
+      }
+      const result = simulateTrainingBuckets(images, baseOptions)
+      const sortedArs = images.map((image) => image.ar).sort((a, b) => a - b)
+
+      return {
+        success: true,
+        folderPath,
+        totalFiles: files.length,
+        totalImages: images.length,
+        skippedCount: skipped.length,
+        skipped: skipped.slice(0, 20),
+        stats: {
+          minAr: sortedArs[0],
+          maxAr: sortedArs[sortedArs.length - 1],
+          q05: rangeStats.q05,
+          medianAr: rangeStats.q50,
+          q95: rangeStats.q95,
+          recommendedMinAr: rangeStats.minAr,
+          recommendedMaxAr: rangeStats.maxAr
+        },
+        result,
+        toml: buildBucketToml(result)
+      }
+    } catch (err) {
+      return { success: false, error: err.message || '分桶分析失败' }
+    }
+  })
+
   ipcMain.handle('create-workflow-run-dir', async (_event, baseDir, name) => {
     try {
       const parent = String(baseDir || '').trim() || getDefaultWorkflowRoot()
@@ -1121,11 +1565,15 @@ export function registerIPC() {
 
   ipcMain.handle('generate-thumbnail', async (_event, filePath) => {
     try {
+      const cached = thumbnailCache.get(filePath)
+      if (cached) return cached
       const jpegBuffer = await sharp(filePath, { failOn: 'none' })
-        .resize(300, 300, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 80 })
+        .resize(180, 180, { fit: 'cover', withoutEnlargement: true })
+        .jpeg({ quality: 72, mozjpeg: true })
         .toBuffer()
-      return `data:image/jpeg;base64,${jpegBuffer.toString('base64')}`
+      const dataUrl = `data:image/jpeg;base64,${jpegBuffer.toString('base64')}`
+      rememberThumbnail(filePath, dataUrl)
+      return dataUrl
     } catch {
       return null
     }

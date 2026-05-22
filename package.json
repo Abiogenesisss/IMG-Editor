@@ -1,10 +1,10 @@
 {
   "name": "img-editor",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "An Electron application with Vue",
   "main": "./out/main/index.js",
   "author": "Abiogenesisss",
-  "homepage": "https://github.com/Abiogenesisss/Koishi_IMG-Editor",
+  "homepage": "https://github.com/Abiogenesisss/IMG-Editor",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",

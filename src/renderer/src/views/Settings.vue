@@ -62,6 +62,7 @@ const allMenuItems = [
   { path: '/upscale', label: '超分辨率', icon: 'upscale', required: false },
   { path: '/tagger', label: '图片打标', icon: 'tagger', required: false },
   { path: '/caption', label: 'Caption', icon: 'caption', required: false },
+  { path: '/buckets', label: '分桶分析', icon: 'buckets', required: false },
   { path: '/workflow', label: '工作流', icon: 'workflow', required: false },
   { path: '/settings', label: '设置', icon: 'settings', required: true }
 ]
@@ -330,6 +331,8 @@ const previewUrl = computed(() => {
               <svg v-else-if="item.icon === 'tagger'" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
               <!-- Caption -->
               <svg v-else-if="item.icon === 'caption'" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+              <!-- 分桶分析 -->
+              <svg v-else-if="item.icon === 'buckets'" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
               <!-- 工作流 -->
               <svg v-else-if="item.icon === 'workflow'" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="5" rx="1"></rect><rect x="15" y="4" width="6" height="5" rx="1"></rect><rect x="9" y="15" width="6" height="5" rx="1"></rect><path d="M9 6.5h6"></path><path d="M18 9v2a4 4 0 0 1-4 4"></path><path d="M6 9v2a4 4 0 0 0 4 4"></path></svg>
               <!-- 设置 -->

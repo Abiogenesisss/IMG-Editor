@@ -85,6 +85,7 @@ const allNavItems = [
   { path: '/upscale', label: '超分辨率' },
   { path: '/tagger', label: '图片打标' },
   { path: '/caption', label: 'Caption' },
+  { path: '/buckets', label: '分桶分析' },
   { path: '/workflow', label: '工作流' }
 ]
 
@@ -243,7 +244,7 @@ onUnmounted(() => {
       </div>
       <router-view v-slot="{ Component }">
         <Transition name="route-fade" mode="out-in">
-          <keep-alive :include="['ImageGrab', 'ImageProcess', 'DataAugment', 'ImageTagger', 'ImageUpscale', 'ImageCaption', 'WorkflowCanvas']" :max="8">
+          <keep-alive :include="['ImageGrab', 'ImageProcess', 'DataAugment', 'ImageTagger', 'ImageUpscale', 'ImageCaption', 'BucketBalancer', 'WorkflowCanvas']" :max="10">
             <component :is="Component" class="route-view" />
           </keep-alive>
         </Transition>
@@ -379,12 +380,14 @@ onUnmounted(() => {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  width: fit-content;
+  max-width: calc(100% - 180px);
+  overflow-x: auto;
   margin: 0 auto;
   box-shadow: 0 1px 3px var(--color-shadow);
 }
 
 .toolbar-btn {
+  flex-shrink: 0;
   width: var(--ui-nav-button-width);
   height: var(--ui-nav-button-height);
   padding: 0 10px;

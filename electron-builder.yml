@@ -104,4 +104,4 @@ npmRebuild: false
 publish:
   provider: github
   owner: Abiogenesisss
-  repo: Koishi_IMG-Editor
+  repo: IMG-Editor

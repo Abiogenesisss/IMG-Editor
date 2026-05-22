@@ -3,7 +3,7 @@ import { registerIPC } from './ipc'
 import { openMainWindow, hasAnyWindow } from './windowManager'
 import { setupAutoUpdater } from './updater'
 import { isLocalFileAccessAllowed } from './localFileAccess'
-import { pathToFileURL } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'local-file', privileges: { stream: true, supportFetchAPI: true } }
@@ -25,9 +25,8 @@ app.whenReady().then(() => {
   })
 
   protocol.handle('local-file', async (request) => {
-    // local-file:///C:/path/to/img.jpg -> C:/path/to/img.jpg
-    const filePath = decodeURIComponent(request.url.slice('local-file:///'.length))
-    if (!await isLocalFileAccessAllowed(filePath)) {
+    const filePath = fileURLToPath(request.url.replace(/^local-file:/, 'file:'))
+    if (!(await isLocalFileAccessAllowed(filePath))) {
       return new Response('Forbidden', { status: 403 })
     }
     return net.fetch(pathToFileURL(filePath).toString())
