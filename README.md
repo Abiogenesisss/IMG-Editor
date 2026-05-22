@@ -1,4 +1,4 @@
-# img-editor
+# IMG-Editor
 
 An Electron application with Vue
 
