@@ -72,7 +72,9 @@ const booruPerPage = useLocalStorage('image-grab-booru-per-page', 100, { type: '
 const booruMinScore = useLocalStorage('image-grab-booru-min-score', 0, { type: 'number' })
 const booruRating = useLocalStorage('image-grab-booru-rating', 'all')
 const booruFilterAi = useLocalStorage('image-grab-booru-filter-ai', true, { type: 'boolean' })
-const booruOnlyOriginal = useLocalStorage('image-grab-booru-only-original', true, { type: 'boolean' })
+const booruOnlyOriginal = useLocalStorage('image-grab-booru-only-original', true, {
+  type: 'boolean'
+})
 const booruWriteTxt = useLocalStorage('image-grab-booru-write-txt', true, { type: 'boolean' })
 const booruResume = useLocalStorage('image-grab-booru-resume', true, { type: 'boolean' })
 
@@ -90,7 +92,9 @@ const pixivResume = useLocalStorage('image-grab-pixiv-resume', true, { type: 'bo
 const twitterCookie = useLocalStorage('image-grab-twitter-cookie', '')
 const twitterQuery = useLocalStorage('image-grab-twitter-query', '')
 const twitterLimit = useLocalStorage('image-grab-twitter-limit', 100, { type: 'number' })
-const twitterIncludeVideo = useLocalStorage('image-grab-twitter-include-video', false, { type: 'boolean' })
+const twitterIncludeVideo = useLocalStorage('image-grab-twitter-include-video', false, {
+  type: 'boolean'
+})
 const twitterResume = useLocalStorage('image-grab-twitter-resume', true, { type: 'boolean' })
 
 const sourceText = useLocalStorage('image-grab-sources', '')
@@ -117,28 +121,35 @@ const taskStage = ref('')
 
 let removeProgressListener = null
 
-const sourceLines = computed(() => sourceText.value
-  .split(/\r?\n/)
-  .map((line) => line.trim())
-  .filter(Boolean))
+const sourceLines = computed(() =>
+  sourceText.value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+)
 
 const isBusy = computed(() => siteRunning.value || scanning.value || downloading.value)
 const selectedCount = computed(() => selected.value.size)
 const savedCount = computed(() => candidates.value.filter((item) => item.status === 'saved').length)
-const failedCount = computed(() => candidates.value.filter((item) => item.status === 'failed').length)
+const failedCount = computed(
+  () => candidates.value.filter((item) => item.status === 'failed').length
+)
 
-const activeBooruLabel = computed(() => booruSites.find((item) => item.value === booruSite.value)?.label || 'Booru')
-const pixivQueryLabel = computed(() => pixivMode.value === 'search' ? 'Tag' : '用户 ID / URL')
+const activeBooruLabel = computed(
+  () => booruSites.find((item) => item.value === booruSite.value)?.label || 'Booru'
+)
+const pixivQueryLabel = computed(() => (pixivMode.value === 'search' ? 'Tag' : '用户 ID / URL'))
 const canRunSiteTask = computed(() => {
   if (isBusy.value || !outputFolder.value) return false
   if (activeTab.value === 'booru') return !!booruSite.value && !!booruTags.value.trim()
   if (activeTab.value === 'pixiv') return !!pixivCookie.value.trim() && !!pixivQuery.value.trim()
-  if (activeTab.value === 'twitter') return !!twitterCookie.value.trim() && !!twitterQuery.value.trim()
+  if (activeTab.value === 'twitter')
+    return !!twitterCookie.value.trim() && !!twitterQuery.value.trim()
   return false
 })
 
-const canScanGeneric = computed(() =>
-  sourceLines.value.length > 0 && selectedTypes.value.size > 0 && !isBusy.value
+const canScanGeneric = computed(
+  () => sourceLines.value.length > 0 && selectedTypes.value.size > 0 && !isBusy.value
 )
 const canDownloadGeneric = computed(() => selectedCount.value > 0 && !isBusy.value)
 
@@ -146,13 +157,11 @@ const filteredCandidates = computed(() => {
   const keyword = searchText.value.trim().toLowerCase()
   if (!keyword) return candidates.value
   return candidates.value.filter((item) => {
-    return [
-      item.filename,
-      item.type,
-      item.url,
-      item.source,
-      item.error
-    ].some((value) => String(value || '').toLowerCase().includes(keyword))
+    return [item.filename, item.type, item.url, item.source, item.error].some((value) =>
+      String(value || '')
+        .toLowerCase()
+        .includes(keyword)
+    )
   })
 })
 
@@ -213,9 +222,7 @@ function resetTaskProgress() {
 }
 
 function setError(error, fallback) {
-  taskError.value = typeof error === 'string'
-    ? error
-    : error?.error || error?.message || fallback
+  taskError.value = typeof error === 'string' ? error : error?.error || error?.message || fallback
 }
 
 async function chooseOutputFolder() {
@@ -362,7 +369,10 @@ function buildSitePayload(folder) {
       limit: Math.max(1, pixivLimit.value || 1),
       min_bookmarks: Math.max(0, pixivMinBookmarks.value || 0),
       start_page: Math.max(1, pixivStartPage.value || 1),
-      end_page: Math.max(pixivStartPage.value || 1, pixivEndPage.value || pixivStartPage.value || 1),
+      end_page: Math.max(
+        pixivStartPage.value || 1,
+        pixivEndPage.value || pixivStartPage.value || 1
+      ),
       ugoira: pixivUgoira.value,
       enable_resume: pixivResume.value
     }
@@ -406,11 +416,12 @@ async function runSiteDownload() {
     }
     taskResult.value = {
       ...result,
-      title: activeTab.value === 'pixiv'
-        ? 'Pixiv 下载完成'
-        : activeTab.value === 'twitter'
-          ? 'Twitter/X 下载完成'
-          : `${activeBooruLabel.value} 下载完成`
+      title:
+        activeTab.value === 'pixiv'
+          ? 'Pixiv 下载完成'
+          : activeTab.value === 'twitter'
+            ? 'Twitter/X 下载完成'
+            : `${activeBooruLabel.value} 下载完成`
     }
   } catch (err) {
     setError(err, '抓取失败')
@@ -577,7 +588,10 @@ function openExternal(item) {
                 @click.stop="toggleBooruSiteSelect"
               >
                 <span>{{ activeBooruLabel }}</span>
-                <ChevronDown :class="['grab-select-arrow', { open: booruSiteDropOpen }]" :size="15" />
+                <ChevronDown
+                  :class="['grab-select-arrow', { open: booruSiteDropOpen }]"
+                  :size="15"
+                />
               </button>
               <Transition name="dropdown">
                 <div v-if="booruSiteDropOpen" class="grab-select-list" @click.stop>
@@ -604,7 +618,13 @@ function openExternal(item) {
           </label>
           <label class="field">
             <span>每页</span>
-            <input v-model.number="booruPerPage" class="field-input" type="number" min="1" max="320" />
+            <input
+              v-model.number="booruPerPage"
+              class="field-input"
+              type="number"
+              min="1"
+              max="320"
+            />
           </label>
           <label class="field">
             <span>最低分</span>
@@ -617,7 +637,11 @@ function openExternal(item) {
                 v-for="item in ratingOptions"
                 :key="item.value"
                 type="button"
-                :class="['segment-btn', `rating-${item.value}`, { active: booruRating === item.value }]"
+                :class="[
+                  'segment-btn',
+                  `rating-${item.value}`,
+                  { active: booruRating === item.value }
+                ]"
                 @click="booruRating = item.value"
               >
                 {{ item.label }}
@@ -627,19 +651,27 @@ function openExternal(item) {
         </div>
         <div class="option-row">
           <label class="option-toggle" @click="booruFilterAi = !booruFilterAi">
-            <span :class="['toggle-switch', { on: booruFilterAi }]"><span class="toggle-knob"></span></span>
+            <span :class="['toggle-switch', { on: booruFilterAi }]"
+              ><span class="toggle-knob"></span
+            ></span>
             过滤 AI
           </label>
           <label class="option-toggle" @click="booruOnlyOriginal = !booruOnlyOriginal">
-            <span :class="['toggle-switch', { on: booruOnlyOriginal }]"><span class="toggle-knob"></span></span>
+            <span :class="['toggle-switch', { on: booruOnlyOriginal }]"
+              ><span class="toggle-knob"></span
+            ></span>
             原图
           </label>
           <label class="option-toggle" @click="booruWriteTxt = !booruWriteTxt">
-            <span :class="['toggle-switch', { on: booruWriteTxt }]"><span class="toggle-knob"></span></span>
+            <span :class="['toggle-switch', { on: booruWriteTxt }]"
+              ><span class="toggle-knob"></span
+            ></span>
             生成 TXT
           </label>
           <label class="option-toggle" @click="booruResume = !booruResume">
-            <span :class="['toggle-switch', { on: booruResume }]"><span class="toggle-knob"></span></span>
+            <span :class="['toggle-switch', { on: booruResume }]"
+              ><span class="toggle-knob"></span
+            ></span>
             断点
           </label>
         </div>
@@ -654,10 +686,19 @@ function openExternal(item) {
           v-model="outputFolder"
           label="输出"
           placeholder="选择根目录"
-          @commit="path => { outputFolder = path }"
+          @commit="
+            (path) => {
+              outputFolder = path
+            }
+          "
           @browse="chooseOutputFolder"
         />
-        <button class="primary-btn" type="button" :disabled="!canRunSiteTask" @click="runSiteDownload">
+        <button
+          class="primary-btn"
+          type="button"
+          :disabled="!canRunSiteTask"
+          @click="runSiteDownload"
+        >
           <Download :size="15" />
           <span>{{ siteRunning ? '下载中' : '开始下载' }}</span>
         </button>
@@ -726,7 +767,9 @@ function openExternal(item) {
         </label>
         <div class="option-row">
           <label class="option-toggle" @click="pixivResume = !pixivResume">
-            <span :class="['toggle-switch', { on: pixivResume }]"><span class="toggle-knob"></span></span>
+            <span :class="['toggle-switch', { on: pixivResume }]"
+              ><span class="toggle-knob"></span
+            ></span>
             断点
           </label>
         </div>
@@ -741,10 +784,19 @@ function openExternal(item) {
           v-model="outputFolder"
           label="输出"
           placeholder="选择根目录"
-          @commit="path => { outputFolder = path }"
+          @commit="
+            (path) => {
+              outputFolder = path
+            }
+          "
           @browse="chooseOutputFolder"
         />
-        <button class="primary-btn" type="button" :disabled="!canRunSiteTask" @click="runSiteDownload">
+        <button
+          class="primary-btn"
+          type="button"
+          :disabled="!canRunSiteTask"
+          @click="runSiteDownload"
+        >
           <Download :size="15" />
           <span>{{ siteRunning ? '下载中' : '开始下载' }}</span>
         </button>
@@ -784,11 +836,15 @@ function openExternal(item) {
         </label>
         <div class="option-row">
           <label class="option-toggle" @click="twitterIncludeVideo = !twitterIncludeVideo">
-            <span :class="['toggle-switch', { on: twitterIncludeVideo }]"><span class="toggle-knob"></span></span>
+            <span :class="['toggle-switch', { on: twitterIncludeVideo }]"
+              ><span class="toggle-knob"></span
+            ></span>
             包含视频/GIF
           </label>
           <label class="option-toggle" @click="twitterResume = !twitterResume">
-            <span :class="['toggle-switch', { on: twitterResume }]"><span class="toggle-knob"></span></span>
+            <span :class="['toggle-switch', { on: twitterResume }]"
+              ><span class="toggle-knob"></span
+            ></span>
             断点
           </label>
         </div>
@@ -803,10 +859,19 @@ function openExternal(item) {
           v-model="outputFolder"
           label="输出"
           placeholder="选择根目录"
-          @commit="path => { outputFolder = path }"
+          @commit="
+            (path) => {
+              outputFolder = path
+            }
+          "
           @browse="chooseOutputFolder"
         />
-        <button class="primary-btn" type="button" :disabled="!canRunSiteTask" @click="runSiteDownload">
+        <button
+          class="primary-btn"
+          type="button"
+          :disabled="!canRunSiteTask"
+          @click="runSiteDownload"
+        >
           <Download :size="15" />
           <span>{{ siteRunning ? '下载中' : '开始下载' }}</span>
         </button>
@@ -841,7 +906,9 @@ function openExternal(item) {
             </button>
           </div>
           <label class="option-toggle" @click="includeSrcset = !includeSrcset">
-            <span :class="['toggle-switch', { on: includeSrcset }]"><span class="toggle-knob"></span></span>
+            <span :class="['toggle-switch', { on: includeSrcset }]"
+              ><span class="toggle-knob"></span
+            ></span>
             srcset
           </label>
           <label class="limit-field">
@@ -860,15 +927,29 @@ function openExternal(item) {
           v-model="outputFolder"
           label="输出"
           placeholder="选择图片保存目录"
-          @commit="path => { outputFolder = path }"
+          @commit="
+            (path) => {
+              outputFolder = path
+            }
+          "
           @browse="chooseOutputFolder"
         />
         <div class="grab-actions">
-          <button class="primary-btn" type="button" :disabled="!canScanGeneric" @click="scanSources">
+          <button
+            class="primary-btn"
+            type="button"
+            :disabled="!canScanGeneric"
+            @click="scanSources"
+          >
             <Search :size="15" />
             <span>{{ scanning ? '扫描中' : '扫描' }}</span>
           </button>
-          <button class="action-btn icon-action" type="button" :disabled="!canDownloadGeneric" @click="downloadSelected">
+          <button
+            class="action-btn icon-action"
+            type="button"
+            :disabled="!canDownloadGeneric"
+            @click="downloadSelected"
+          >
             <Download :size="15" />
             <span>{{ downloading ? '保存中' : '保存选中' }}</span>
           </button>
@@ -893,7 +974,9 @@ function openExternal(item) {
         <span class="progress-bar-track">
           <span class="progress-bar-fill" :style="{ width: progressWidth }"></span>
         </span>
-        <span class="progress-text" :title="taskCurrent">{{ taskLabel }} {{ taskDone }} / {{ taskTotal }}</span>
+        <span class="progress-text" :title="taskCurrent"
+          >{{ taskLabel }} {{ taskDone }} / {{ taskTotal }}</span
+        >
         <button class="stop-task-btn" type="button" title="停止下载" @click="abortTask">
           <X :size="14" />
           <span>停止下载</span>
@@ -940,7 +1023,8 @@ function openExternal(item) {
         </div>
 
         <span class="status-text">
-          共 {{ candidates.length }} 张，已选 {{ selectedCount }} 张，已保存 {{ savedCount }} 张<span v-if="failedCount">，失败 {{ failedCount }} 张</span>
+          共 {{ candidates.length }} 张，已选 {{ selectedCount }} 张，已保存
+          {{ savedCount }} 张<span v-if="failedCount">，失败 {{ failedCount }} 张</span>
         </span>
 
         <div class="result-search">
@@ -958,7 +1042,14 @@ function openExternal(item) {
         <div
           v-for="item in filteredCandidates"
           :key="item.id"
-          :class="['image-card grab-card', { selected: selected.has(item.id), saved: item.status === 'saved', failed: item.status === 'failed' }]"
+          :class="[
+            'image-card grab-card',
+            {
+              selected: selected.has(item.id),
+              saved: item.status === 'saved',
+              failed: item.status === 'failed'
+            }
+          ]"
           @click="openPreview(item)"
         >
           <img
@@ -980,7 +1071,9 @@ function openExternal(item) {
       </div>
 
       <div v-else class="empty-state">
-        <span class="empty-text">{{ candidates.length ? '没有匹配的图片' : '输入 URL 后开始扫描' }}</span>
+        <span class="empty-text">{{
+          candidates.length ? '没有匹配的图片' : '输入 URL 后开始扫描'
+        }}</span>
       </div>
     </template>
 
@@ -1022,11 +1115,27 @@ function openExternal(item) {
 }
 
 .site-tabs {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
   flex-shrink: 0;
+}
+
+.site-tabs::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--pjsk-page-divider-size);
+  background: var(--pjsk-divider-gradient-x);
+}
+
+[data-theme='dark'] .site-tabs::after {
+  opacity: 0.9;
 }
 
 .site-tab-btn {
@@ -1051,6 +1160,12 @@ function openExternal(item) {
   border-color: var(--color-active-bg);
   background: var(--color-active-bg);
   color: var(--color-active-text);
+}
+
+.site-tab-btn.tab-twitter.active {
+  border-color: #0f1419;
+  background: #0f1419;
+  color: #ffffff;
 }
 
 /* Pixiv 品牌蓝 */
@@ -1082,13 +1197,21 @@ function openExternal(item) {
   );
   background-size: 300% 300%;
   animation: tab-generic-shift 6s ease-in-out infinite;
-  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.35), 0 6px 18px rgba(99, 102, 241, 0.28);
+  box-shadow:
+    0 0 0 1px rgba(139, 92, 246, 0.35),
+    0 6px 18px rgba(99, 102, 241, 0.28);
 }
 
 @keyframes tab-generic-shift {
-  0%   { background-position: 0% 50%; }
-  50%  { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 .site-tab-btn.active:hover:not(:disabled) {
@@ -1101,18 +1224,19 @@ function openExternal(item) {
 }
 
 .site-workbench {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
   gap: 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 12px;
+  border-bottom: none;
   flex-shrink: 0;
 }
 
 .source-panel,
 .target-panel {
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface);
   padding: 12px;
 }
@@ -1192,7 +1316,7 @@ function openExternal(item) {
   box-sizing: border-box;
   width: 100%;
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-input-bg);
   color: var(--color-text);
   font-family: inherit;
@@ -1220,14 +1344,16 @@ function openExternal(item) {
   height: 34px;
   padding: 0 10px;
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-input-bg);
   color: var(--color-text);
   font-family: inherit;
   font-size: 13px;
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
 .grab-select-trigger:hover:not(:disabled),
@@ -1268,7 +1394,7 @@ function openExternal(item) {
   padding: 4px;
   overflow-y: auto;
   border: 1px solid var(--color-border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface);
   box-shadow: 0 10px 26px var(--color-shadow);
 }
@@ -1280,7 +1406,7 @@ function openExternal(item) {
   height: 30px;
   padding: 0 9px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
   font-family: inherit;
@@ -1300,7 +1426,9 @@ function openExternal(item) {
 
 .dropdown-enter-active,
 .dropdown-leave-active {
-  transition: opacity 0.15s, transform 0.15s;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
   transform-origin: top center;
 }
 
@@ -1546,7 +1674,7 @@ function openExternal(item) {
 
 .metric {
   padding: 2px 7px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.5);
   color: var(--color-text);
 }
@@ -1565,12 +1693,13 @@ function openExternal(item) {
 }
 
 .grab-status-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
   min-height: 42px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--color-border-light);
+  padding: 8px 0 10px;
+  border-bottom: none;
   flex-shrink: 0;
 }
 
@@ -1645,7 +1774,7 @@ function openExternal(item) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
   line-height: 1.3;
 }
@@ -1693,7 +1822,7 @@ function openExternal(item) {
   bottom: 20px;
   transform: translateX(-50%);
   width: min(720px, calc(100vw - 48px));
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.64);
   color: #fff;
   padding: 10px 12px;
@@ -1738,29 +1867,29 @@ function openExternal(item) {
   background: rgba(255, 255, 255, 0.2);
 }
 
-[data-theme="dark"] .source-panel,
-[data-theme="dark"] .target-panel {
+[data-theme='dark'] .source-panel,
+[data-theme='dark'] .target-panel {
   background: rgba(39, 39, 42, 0.72);
   border-color: rgba(63, 63, 70, 0.8);
 }
 
-[data-theme="dark"] .type-badge {
+[data-theme='dark'] .type-badge {
   background: rgba(24, 24, 27, 0.82);
   color: #e4e4e7;
 }
 
-[data-theme="dark"] .warning-strip {
+[data-theme='dark'] .warning-strip {
   background: rgba(245, 158, 11, 0.08);
 }
 
-[data-theme="dark"] .status-strip,
-[data-theme="dark"] .task-summary {
+[data-theme='dark'] .status-strip,
+[data-theme='dark'] .task-summary {
   background: rgba(74, 222, 128, 0.08);
   border-color: rgba(74, 222, 128, 0.22);
   color: #86efac;
 }
 
-[data-theme="dark"] .metric {
+[data-theme='dark'] .metric {
   background: rgba(24, 24, 27, 0.55);
   color: var(--color-text);
 }

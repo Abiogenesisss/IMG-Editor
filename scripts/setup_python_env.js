@@ -28,34 +28,38 @@ function download(url, dest) {
   return new Promise((resolve, reject) => {
     const file = createWriteStream(dest)
     const getter = url.startsWith('https') ? https : http
-    getter.get(url, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        file.close()
-        return download(res.headers.location, dest).then(resolve, reject)
-      }
-      if (res.statusCode !== 200) {
-        file.close()
-        return reject(new Error(`下载失败: HTTP ${res.statusCode} - ${url}`))
-      }
-      const total = parseInt(res.headers['content-length'] || '0')
-      let downloaded = 0
-      res.on('data', (chunk) => {
-        downloaded += chunk.length
-        if (total) {
-          const pct = ((downloaded / total) * 100).toFixed(1)
-          process.stdout.write(`\r  下载中... ${pct}% (${(downloaded / 1024 / 1024).toFixed(1)}MB)`)
+    getter
+      .get(url, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          file.close()
+          return download(res.headers.location, dest).then(resolve, reject)
         }
+        if (res.statusCode !== 200) {
+          file.close()
+          return reject(new Error(`下载失败: HTTP ${res.statusCode} - ${url}`))
+        }
+        const total = parseInt(res.headers['content-length'] || '0')
+        let downloaded = 0
+        res.on('data', (chunk) => {
+          downloaded += chunk.length
+          if (total) {
+            const pct = ((downloaded / total) * 100).toFixed(1)
+            process.stdout.write(
+              `\r  下载中... ${pct}% (${(downloaded / 1024 / 1024).toFixed(1)}MB)`
+            )
+          }
+        })
+        res.pipe(file)
+        file.on('finish', () => {
+          file.close()
+          console.log()
+          resolve()
+        })
       })
-      res.pipe(file)
-      file.on('finish', () => {
+      .on('error', (err) => {
         file.close()
-        console.log()
-        resolve()
+        reject(err)
       })
-    }).on('error', (err) => {
-      file.close()
-      reject(err)
-    })
   })
 }
 

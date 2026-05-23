@@ -4,7 +4,18 @@ import eslintPluginVue from 'eslint-plugin-vue'
 import vueParser from 'vue-eslint-parser'
 
 export default [
-  { ignores: ['**/node_modules', '**/dist', '**/out'] },
+  {
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/out',
+      '**/build',
+      'python_backend/python_embed/**',
+      'python_backend/models/**',
+      'python_backend/waifu2x/pretrained_models/**',
+      'python_backend/nunif/modules/_alex11.pth'
+    ]
+  },
   eslintConfig,
   ...eslintPluginVue.configs['flat/recommended'],
   {

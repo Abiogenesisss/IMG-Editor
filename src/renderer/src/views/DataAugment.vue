@@ -1,6 +1,7 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
+import { useGridObserver } from '../composables/useGridObserver'
 import FolderRow from '../components/FolderRow.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
 
@@ -34,9 +35,7 @@ const {
   observeGrid
 } = useImageBrowser()
 
-const gridRef = ref(null)
-onMounted(() => { if (gridRef.value) observeGrid(gridRef.value) })
-watch(() => images.value, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
+const gridRef = useGridObserver(images, observeGrid)
 
 const activePanel = ref(null)
 
@@ -49,7 +48,7 @@ function closePanel() {
 }
 
 // --- 增强预览 ---
-const augPreviewData = ref(null)   // base64 图片数据
+const augPreviewData = ref(null) // base64 图片数据
 const augPreviewLoading = ref(false)
 
 async function doPreview(augType, params) {
@@ -58,7 +57,9 @@ async function doPreview(augType, params) {
   augPreviewLoading.value = true
   try {
     const result = await window.api.callPython('/preview-augment', {
-      file: file, aug_type: augType, params
+      file: file,
+      aug_type: augType,
+      params
     })
     if (result.ok) {
       augPreviewData.value = result.data
@@ -96,7 +97,8 @@ async function runTask(actionName, apiFn) {
 function mirrorFlip() {
   runTask('mirrorFlip', (outDir) =>
     window.api.callPython('/mirror-flip', {
-      files: [...selectedImages.value], output_dir: outDir
+      files: [...selectedImages.value],
+      output_dir: outDir
     })
   )
 }
@@ -109,8 +111,11 @@ const headConf = ref(0.3)
 function runThreeStageSplit() {
   runTask('split', (outDir) =>
     window.api.callPython('/three-stage-split', {
-      files: [...selectedImages.value], output_dir: outDir,
-      person_conf: personConf.value, halfbody_conf: halfbodyConf.value, head_conf: headConf.value
+      files: [...selectedImages.value],
+      output_dir: outDir,
+      person_conf: personConf.value,
+      halfbody_conf: halfbodyConf.value,
+      head_conf: headConf.value
     })
   )
 }
@@ -122,8 +127,10 @@ const cutoutSize = ref(0.15)
 function runCutout() {
   runTask('cutout', (outDir) =>
     window.api.callPython('/cutout', {
-      files: [...selectedImages.value], output_dir: outDir,
-      count: cutoutCount.value, size_ratio: cutoutSize.value
+      files: [...selectedImages.value],
+      output_dir: outDir,
+      count: cutoutCount.value,
+      size_ratio: cutoutSize.value
     })
   )
 }
@@ -138,7 +145,8 @@ const perspIntensity = ref(0.1)
 function runPerspective() {
   runTask('perspective', (outDir) =>
     window.api.callPython('/perspective', {
-      files: [...selectedImages.value], output_dir: outDir,
+      files: [...selectedImages.value],
+      output_dir: outDir,
       intensity: perspIntensity.value
     })
   )
@@ -155,8 +163,10 @@ const noiseSigma = ref(15.0)
 function runGaussianBlurNoise() {
   runTask('blurnoise', (outDir) =>
     window.api.callPython('/gaussian-blur-noise', {
-      files: [...selectedImages.value], output_dir: outDir,
-      blur_radius: blurRadius.value, noise_sigma: noiseSigma.value
+      files: [...selectedImages.value],
+      output_dir: outDir,
+      blur_radius: blurRadius.value,
+      noise_sigma: noiseSigma.value
     })
   )
 }
@@ -164,8 +174,6 @@ function runGaussianBlurNoise() {
 function previewBlurNoise() {
   doPreview('blurnoise', { blur_radius: blurRadius.value, noise_sigma: noiseSigma.value })
 }
-
-
 </script>
 
 <template>
@@ -180,14 +188,18 @@ function previewBlurNoise() {
           v-model="inputFolder"
           label="输入"
           placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
-          @commit="path => path && loadInputFolder(path)"
+          @commit="(path) => path && loadInputFolder(path)"
           @browse="chooseInputFolder"
         />
         <FolderRow
           v-model="outputFolder"
           label="输出"
           :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
-          @commit="path => { outputFolder = path }"
+          @commit="
+            (path) => {
+              outputFolder = path
+            }
+          "
           @browse="chooseOutputFolder"
         />
       </div>
@@ -210,20 +222,22 @@ function previewBlurNoise() {
             三分法裁剪
           </button>
           <div v-if="activePanel === 'split'" class="action-panel">
-            <div style="font-size: 12px; color: #4b5563; font-weight: 500; margin-bottom: 2px;">阈值</div>
+            <div style="font-size: 12px; color: #4b5563; font-weight: 500; margin-bottom: 2px">
+              阈值
+            </div>
             <div class="panel-row">
               <label>全身</label>
-              <input type="range" v-model.number="personConf" min="0.1" max="0.9" step="0.05" />
+              <input v-model.number="personConf" type="range" min="0.1" max="0.9" step="0.05" />
               <span class="range-value">{{ personConf.toFixed(2) }}</span>
             </div>
             <div class="panel-row">
               <label>半身</label>
-              <input type="range" v-model.number="halfbodyConf" min="0.1" max="0.9" step="0.05" />
+              <input v-model.number="halfbodyConf" type="range" min="0.1" max="0.9" step="0.05" />
               <span class="range-value">{{ halfbodyConf.toFixed(2) }}</span>
             </div>
             <div class="panel-row">
               <label>头像</label>
-              <input type="range" v-model.number="headConf" min="0.1" max="0.9" step="0.05" />
+              <input v-model.number="headConf" type="range" min="0.1" max="0.9" step="0.05" />
               <span class="range-value">{{ headConf.toFixed(2) }}</span>
             </div>
             <button class="panel-run" @click="runThreeStageSplit">执行</button>
@@ -242,16 +256,22 @@ function previewBlurNoise() {
           <div v-if="activePanel === 'cutout'" class="action-panel">
             <div class="panel-row">
               <label>数量</label>
-              <input type="range" v-model.number="cutoutCount" min="1" max="10" step="1" />
+              <input v-model.number="cutoutCount" type="range" min="1" max="10" step="1" />
               <span class="range-value">{{ cutoutCount }}</span>
             </div>
             <div class="panel-row">
               <label>遮挡比例</label>
-              <input type="range" v-model.number="cutoutSize" min="0.05" max="0.4" step="0.01" />
+              <input v-model.number="cutoutSize" type="range" min="0.05" max="0.4" step="0.01" />
               <span class="range-value">{{ cutoutSize.toFixed(2) }}</span>
             </div>
             <div class="panel-actions">
-              <button class="panel-preview" :disabled="selectedCount === 0 || augPreviewLoading" @click="previewCutout">预览</button>
+              <button
+                class="panel-preview"
+                :disabled="selectedCount === 0 || augPreviewLoading"
+                @click="previewCutout"
+              >
+                预览
+              </button>
               <button class="panel-run" @click="runCutout">执行</button>
             </div>
           </div>
@@ -269,11 +289,23 @@ function previewBlurNoise() {
           <div v-if="activePanel === 'perspective'" class="action-panel">
             <div class="panel-row">
               <label>强度</label>
-              <input type="range" v-model.number="perspIntensity" min="0.02" max="0.3" step="0.01" />
+              <input
+                v-model.number="perspIntensity"
+                type="range"
+                min="0.02"
+                max="0.3"
+                step="0.01"
+              />
               <span class="range-value">{{ perspIntensity.toFixed(2) }}</span>
             </div>
             <div class="panel-actions">
-              <button class="panel-preview" :disabled="selectedCount === 0 || augPreviewLoading" @click="previewPerspective">预览</button>
+              <button
+                class="panel-preview"
+                :disabled="selectedCount === 0 || augPreviewLoading"
+                @click="previewPerspective"
+              >
+                预览
+              </button>
               <button class="panel-run" @click="runPerspective">执行</button>
             </div>
           </div>
@@ -291,16 +323,22 @@ function previewBlurNoise() {
           <div v-if="activePanel === 'blurnoise'" class="action-panel">
             <div class="panel-row">
               <label>模糊半径</label>
-              <input type="range" v-model.number="blurRadius" min="0" max="10" step="0.5" />
+              <input v-model.number="blurRadius" type="range" min="0" max="10" step="0.5" />
               <span class="range-value">{{ blurRadius.toFixed(1) }}</span>
             </div>
             <div class="panel-row">
               <label>噪声强度</label>
-              <input type="range" v-model.number="noiseSigma" min="0" max="50" step="1" />
+              <input v-model.number="noiseSigma" type="range" min="0" max="50" step="1" />
               <span class="range-value">{{ noiseSigma.toFixed(0) }}</span>
             </div>
             <div class="panel-actions">
-              <button class="panel-preview" :disabled="selectedCount === 0 || augPreviewLoading" @click="previewBlurNoise">预览</button>
+              <button
+                class="panel-preview"
+                :disabled="selectedCount === 0 || augPreviewLoading"
+                @click="previewBlurNoise"
+              >
+                预览
+              </button>
               <button class="panel-run" @click="runGaussianBlurNoise">执行</button>
             </div>
           </div>
@@ -396,7 +434,10 @@ function previewBlurNoise() {
   color: #1b1b1f;
   font-size: 12px;
   cursor: pointer;
-  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+  transition:
+    color 0.15s,
+    background-color 0.15s,
+    border-color 0.15s;
 }
 
 .panel-preview:hover:not(:disabled) {

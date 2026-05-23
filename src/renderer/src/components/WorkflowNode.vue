@@ -33,7 +33,9 @@ const progressPercent = computed(() => {
   if (!progress.value || progress.value.percent == null) return 0
   return Math.max(0, Math.min(100, progress.value.percent))
 })
-const hasProgress = computed(() => nodeStatus.value === 'running' || progress.value?.percent != null)
+const hasProgress = computed(
+  () => nodeStatus.value === 'running' || progress.value?.percent != null
+)
 
 function toggleCollapsed() {
   props.data.onToggleCollapsed?.(props.id)
@@ -71,16 +73,26 @@ async function chooseFolder(field) {
         <strong class="node-title">{{ data.label }}</strong>
       </div>
       <div class="node-head-actions">
-        <button class="node-icon-btn" type="button" :title="data.collapsed ? '展开参数' : '折叠参数'" @click.stop="toggleCollapsed">
+        <button
+          class="node-icon-btn"
+          type="button"
+          :title="data.collapsed ? '展开参数' : '折叠参数'"
+          @click.stop="toggleCollapsed"
+        >
           {{ data.collapsed ? '+' : '-' }}
         </button>
-        <button class="node-icon-btn danger" type="button" title="删除节点" @click.stop="deleteNode">
+        <button
+          class="node-icon-btn danger"
+          type="button"
+          title="删除节点"
+          @click.stop="deleteNode"
+        >
           <Trash2 :size="13" />
         </button>
       </div>
     </div>
 
-    <div class="port-list input-list" v-if="(data.inputs || []).length">
+    <div v-if="(data.inputs || []).length" class="port-list input-list">
       <span v-for="port in data.inputs" :key="port.id" class="port-chip">
         {{ port.label }} · {{ typeText[port.type] || port.type }}
       </span>
@@ -94,7 +106,11 @@ async function chooseFolder(field) {
       @touchstart.stop
       @dblclick.stop
     >
-      <label v-for="field in fields" :key="field.key" :class="['param-field', `field-${field.type}`]">
+      <label
+        v-for="field in fields"
+        :key="field.key"
+        :class="['param-field', `field-${field.type}`]"
+      >
         <span class="field-label">{{ field.label }}</span>
 
         <template v-if="field.type === 'select'">
@@ -124,7 +140,13 @@ async function chooseFolder(field) {
 
         <template v-else-if="field.type === 'folder'">
           <span class="folder-input">
-            <input v-model="params[field.key]" class="node-input" type="text" :placeholder="field.placeholder" spellcheck="false" />
+            <input
+              v-model="params[field.key]"
+              class="node-input"
+              type="text"
+              :placeholder="field.placeholder"
+              spellcheck="false"
+            />
             <button type="button" class="tiny-btn" @click.stop="chooseFolder(field)">选择</button>
           </span>
         </template>
@@ -146,7 +168,13 @@ async function chooseFolder(field) {
         </template>
 
         <template v-else>
-          <input v-model="params[field.key]" class="node-input" type="text" :placeholder="field.placeholder" spellcheck="false" />
+          <input
+            v-model="params[field.key]"
+            class="node-input"
+            type="text"
+            :placeholder="field.placeholder"
+            spellcheck="false"
+          />
         </template>
       </label>
     </div>
@@ -156,8 +184,14 @@ async function chooseFolder(field) {
     <div v-if="hasProgress" class="node-progress">
       <div class="progress-track">
         <div
-          :class="['progress-fill', { indeterminate: nodeStatus === 'running' && progress?.percent == null }]"
-          :style="{ width: progress?.percent == null && nodeStatus === 'running' ? '38%' : `${progressPercent}%` }"
+          :class="[
+            'progress-fill',
+            { indeterminate: nodeStatus === 'running' && progress?.percent == null }
+          ]"
+          :style="{
+            width:
+              progress?.percent == null && nodeStatus === 'running' ? '38%' : `${progressPercent}%`
+          }"
         ></div>
       </div>
       <div class="progress-meta">
@@ -169,11 +203,15 @@ async function chooseFolder(field) {
     </div>
 
     <div class="node-foot">
-      <span :class="['status-pill', `pill-${nodeStatus}`]">{{ statusText[nodeStatus] || nodeStatus }}</span>
-      <span v-if="data.metrics?.count != null" class="metric-text">{{ data.metrics.count }} 张</span>
+      <span :class="['status-pill', `pill-${nodeStatus}`]">{{
+        statusText[nodeStatus] || nodeStatus
+      }}</span>
+      <span v-if="data.metrics?.count != null" class="metric-text"
+        >{{ data.metrics.count }} 张</span
+      >
     </div>
 
-    <div class="port-list output-list" v-if="(data.outputs || []).length">
+    <div v-if="(data.outputs || []).length" class="port-list output-list">
       <span v-for="port in data.outputs" :key="port.id" class="port-chip output">
         {{ port.label }} · {{ typeText[port.type] || port.type }}
       </span>
@@ -195,7 +233,7 @@ async function chooseFolder(field) {
 .workflow-node {
   width: 282px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
   color: var(--color-text);
@@ -204,7 +242,9 @@ async function chooseFolder(field) {
 
 .workflow-node.selected {
   border-color: var(--color-info);
-  box-shadow: 0 0 0 2px var(--color-info-light), 0 12px 28px rgba(15, 23, 42, 0.12);
+  box-shadow:
+    0 0 0 2px var(--color-info-light),
+    0 12px 28px rgba(15, 23, 42, 0.12);
 }
 
 .node-head {
@@ -247,7 +287,7 @@ async function chooseFolder(field) {
   width: 24px;
   height: 24px;
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -292,7 +332,7 @@ async function chooseFolder(field) {
   min-width: 0;
   height: 30px;
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-input-bg);
   color: var(--color-text);
   padding: 0 8px;
@@ -329,7 +369,7 @@ async function chooseFolder(field) {
   height: 30px;
   padding: 0 9px;
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -360,7 +400,7 @@ async function chooseFolder(field) {
 .port-chip {
   max-width: 100%;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface-hover);
   color: var(--color-text-muted);
   font-size: 10px;
@@ -377,7 +417,7 @@ async function chooseFolder(field) {
 .node-message {
   margin: 0 12px 8px;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
   color: var(--color-text-secondary);
   font-size: 11px;
@@ -392,14 +432,14 @@ async function chooseFolder(field) {
 .progress-track {
   position: relative;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--color-surface-hover);
 }
 
 .progress-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--color-info);
   transition: width 0.18s ease;
 }
@@ -430,8 +470,12 @@ async function chooseFolder(field) {
 }
 
 @keyframes progress-slide {
-  from { transform: translateX(0); }
-  to { transform: translateX(365%); }
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(365%);
+  }
 }
 
 .node-foot {
@@ -447,7 +491,7 @@ async function chooseFolder(field) {
   align-items: center;
   height: 20px;
   padding: 0 7px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface-hover);
   color: var(--color-text-muted);
   font-size: 11px;
@@ -488,7 +532,7 @@ async function chooseFolder(field) {
   right: -6px;
 }
 
-[data-theme="dark"] .workflow-node {
+[data-theme='dark'] .workflow-node {
   background: rgba(32, 32, 36, 0.96);
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
 }

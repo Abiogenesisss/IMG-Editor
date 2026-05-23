@@ -59,7 +59,9 @@ const progressWidth = computed(() => {
         <span class="progress-bar-track">
           <span class="progress-bar-fill" :style="{ width: progressWidth }"></span>
         </span>
-        <span class="progress-text">{{ processingLabel }} {{ progressDone }} / {{ progressTotal }}</span>
+        <span class="progress-text"
+          >{{ processingLabel }} {{ progressDone }} / {{ progressTotal }}</span
+        >
       </template>
       <span v-else class="progress-text status-pending">{{ processingLabel }}...</span>
       <IconButton :icon="X" variant="abort" title="终止任务" :size="14" @click="$emit('abort')" />

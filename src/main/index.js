@@ -1,5 +1,5 @@
 import { app, protocol, net, session } from 'electron'
-import { registerIPC } from './ipc'
+import { isForcedQuitInProgress, registerIPC, requestForcedQuit } from './ipc'
 import { openMainWindow, hasAnyWindow } from './windowManager'
 import { setupAutoUpdater } from './updater'
 import { isLocalFileAccessAllowed } from './localFileAccess'
@@ -47,6 +47,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    app.quit()
+    if (!isForcedQuitInProgress()) {
+      requestForcedQuit('window-all-closed')
+    }
   }
 })

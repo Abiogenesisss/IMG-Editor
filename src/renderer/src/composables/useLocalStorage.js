@@ -17,13 +17,17 @@ export function useLocalStorage(key, defaultValue, options = {}) {
 
   // 写入时同步到 localStorage
   let skipNextWatch = false
-  watch(data, (v) => {
-    if (skipNextWatch) {
-      skipNextWatch = false
-      return
-    }
-    localStorage.setItem(key, serialize(v, type))
-  }, { deep: type === 'json' })
+  watch(
+    data,
+    (v) => {
+      if (skipNextWatch) {
+        skipNextWatch = false
+        return
+      }
+      localStorage.setItem(key, serialize(v, type))
+    },
+    { deep: type === 'json' }
+  )
 
   // 监听其他标签页/窗口的 storage 变更
   function onStorageChange(e) {
@@ -56,12 +60,20 @@ function inferType(value) {
 
 function deserialize(raw, type) {
   switch (type) {
-    case 'boolean': return raw === 'true'
-    case 'number': return parseInt(raw) || 0
-    case 'float': return parseFloat(raw) || 0
+    case 'boolean':
+      return raw === 'true'
+    case 'number':
+      return parseInt(raw) || 0
+    case 'float':
+      return parseFloat(raw) || 0
     case 'json':
-      try { return JSON.parse(raw) } catch { return null }
-    default: return raw
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return null
+      }
+    default:
+      return raw
   }
 }
 

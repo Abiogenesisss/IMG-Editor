@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
+import { useGridObserver } from '../composables/useGridObserver'
 import FolderRow from '../components/FolderRow.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
 
@@ -35,9 +36,7 @@ const {
   observeGrid
 } = useImageBrowser()
 
-const gridRef = ref(null)
-onMounted(() => { if (gridRef.value) observeGrid(gridRef.value) })
-watch(() => images.value, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
+const gridRef = useGridObserver(images, observeGrid)
 
 // --- 面板控制 ---
 const activePanel = ref(null)
@@ -50,7 +49,7 @@ const ACTION_LABELS = {
   crop: '比例裁剪',
   dedup: '去重',
   cluster: '聚类',
-  clusterMove: '整理聚类结果',
+  clusterMove: '整理聚类结果'
 }
 
 const processingLabel = computed(() => {
@@ -99,10 +98,10 @@ async function runOutputTask(actionName, apiFn) {
 }
 
 // --- 分辨率过滤 ---
-const filterMode = ref('both')  // 'width' | 'height' | 'both'
+const filterMode = ref('both') // 'width' | 'height' | 'both'
 const filterMinWidth = ref(512)
 const filterMinHeight = ref(512)
-const filterMap = ref(new Map())  // file path → { filtered, width, height }
+const filterMap = ref(new Map()) // file path → { filtered, width, height }
 const filterActive = ref(false)
 
 async function runResolutionFilter() {
@@ -119,7 +118,11 @@ async function runResolutionFilter() {
   processingAction.value = 'filter'
   try {
     const result = await window.api.callPython('/resolution-filter', {
-      files: files, min_width: minW, max_width: 0, min_height: minH, max_height: 0
+      files: files,
+      min_width: minW,
+      max_width: 0,
+      min_height: minH,
+      max_height: 0
     })
     if (result.aborted) return
     if (result.success) {
@@ -152,7 +155,9 @@ const targetFormat = ref('png')
 function runFormatConvert() {
   runOutputTask('convert', (outDir) =>
     window.api.callPython('/format-convert', {
-      files: [...selectedImages.value], output_dir: outDir, target_format: targetFormat.value
+      files: [...selectedImages.value],
+      output_dir: outDir,
+      target_format: targetFormat.value
     })
   )
 }
@@ -163,7 +168,9 @@ const alphaBackground = ref('white')
 function runAlphaFlatten() {
   runOutputTask('alpha', (outDir) =>
     window.api.callPython('/flatten-alpha', {
-      files: getTargetFiles(), output_dir: outDir, background: alphaBackground.value
+      files: getTargetFiles(),
+      output_dir: outDir,
+      background: alphaBackground.value
     })
   )
 }
@@ -203,11 +210,16 @@ function runProportionalCrop() {
     if (cropAuto.value) {
       const ratioList = cropPresets.map((p) => [p.w, p.h])
       return window.api.callPython('/auto-crop', {
-        files: [...selectedImages.value], output_dir: outDir, ratio_list: ratioList
+        files: [...selectedImages.value],
+        output_dir: outDir,
+        ratio_list: ratioList
       })
     }
     return window.api.callPython('/proportional-crop', {
-      files: [...selectedImages.value], output_dir: outDir, ratio_w: cropRatioW.value, ratio_h: cropRatioH.value
+      files: [...selectedImages.value],
+      output_dir: outDir,
+      ratio_w: cropRatioW.value,
+      ratio_h: cropRatioH.value
     })
   })
 }
@@ -219,7 +231,16 @@ const dedupColorThresh = ref(0.5)
 const dedupMap = ref(new Map()) // file path → { group, similarity }
 const dedupActive = ref(false)
 
-const GROUP_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
+const GROUP_COLORS = [
+  '#3b82f6',
+  '#ef4444',
+  '#f59e0b',
+  '#10b981',
+  '#8b5cf6',
+  '#ec4899',
+  '#06b6d4',
+  '#f97316'
+]
 
 function getGroupColor(groupId) {
   if (groupId == null) return null
@@ -236,6 +257,11 @@ const clusterFusion = ref(false)
 const clusterFusionStyle = ref(0.5)
 const clusterFusionSemantic = ref(0.5)
 const clusterFusionColor = ref(0.0)
+
+function setClusterMethod(method) {
+  clusterFusion.value = false
+  clusterMethod.value = method
+}
 
 // --- 统一的分组信息获取 ---
 function getGroupInfo(img) {
@@ -302,7 +328,10 @@ async function deduplicate() {
   processingAction.value = 'dedup'
   try {
     const result = await window.api.callPython('/deduplicate', {
-      files: files, hash_thresh: dedupHashThresh.value, phash_thresh: dedupPhashThresh.value, color_thresh: dedupColorThresh.value
+      files: files,
+      hash_thresh: dedupHashThresh.value,
+      phash_thresh: dedupPhashThresh.value,
+      color_thresh: dedupColorThresh.value
     })
     if (result.aborted) return
     if (result.success) {
@@ -337,15 +366,19 @@ async function runCluster() {
       algorithm: clusterAlgorithm.value,
       k: clusterK.value,
       fusionWeights: clusterFusion.value
-        ? { style: clusterFusionStyle.value, semantic: clusterFusionSemantic.value, color: clusterFusionColor.value }
-        : null,
+        ? {
+            style: clusterFusionStyle.value,
+            semantic: clusterFusionSemantic.value,
+            color: clusterFusionColor.value
+          }
+        : null
     }
     const result = await window.api.callPython('/cluster', {
       files: files,
       method: options.method || 'style',
       algorithm: options.algorithm || 'kmeans',
       k: options.k || 5,
-      fusion_weights: options.fusionWeights || null,
+      fusion_weights: options.fusionWeights || null
     })
     if (result.aborted) return
     if (result.success) {
@@ -379,7 +412,8 @@ async function moveClusterResults() {
   processingAction.value = 'clusterMove'
   try {
     const result = await window.api.callPython('/cluster-move', {
-      files_by_group: filesByGroup, output_dir: outDir
+      files_by_group: filesByGroup,
+      output_dir: outDir
     })
     if (result.success) {
       clearCluster()
@@ -432,14 +466,18 @@ function clearProcessFolder() {
           v-model="inputFolder"
           label="输入"
           placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
-          @commit="path => path && loadInputFolder(path)"
+          @commit="(path) => path && loadInputFolder(path)"
           @browse="chooseInputFolder"
         />
         <FolderRow
           v-model="outputFolder"
           label="输出"
           :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
-          @commit="path => { outputFolder = path }"
+          @commit="
+            (path) => {
+              outputFolder = path
+            }
+          "
           @browse="chooseOutputFolder"
         />
       </div>
@@ -476,13 +514,13 @@ function clearProcessFolder() {
             <template v-if="filterMode === 'width' || filterMode === 'both'">
               <div class="panel-row">
                 <label>最小宽度</label>
-                <input type="number" v-model.number="filterMinWidth" min="1" /> px
+                <input v-model.number="filterMinWidth" type="number" min="1" /> px
               </div>
             </template>
             <template v-if="filterMode === 'height' || filterMode === 'both'">
               <div class="panel-row">
                 <label>最小高度</label>
-                <input type="number" v-model.number="filterMinHeight" min="1" /> px
+                <input v-model.number="filterMinHeight" type="number" min="1" /> px
               </div>
             </template>
             <button class="panel-run" @click="runResolutionFilter">执行</button>
@@ -547,31 +585,28 @@ function clearProcessFolder() {
           </button>
           <div v-if="activePanel === 'crop'" class="action-panel">
             <div class="panel-row preset-row">
-              <label
-                :class="['format-tag', { selected: cropAuto }]"
-                @click="toggleCropAuto"
-              >
+              <label :class="['format-tag', { selected: cropAuto }]" @click="toggleCropAuto">
                 Auto
               </label>
               <label
                 v-for="p in cropPresets"
                 :key="p.label"
-                :class="['format-tag', { selected: !cropAuto && !cropCustom && cropRatioW === p.w && cropRatioH === p.h }]"
+                :class="[
+                  'format-tag',
+                  { selected: !cropAuto && !cropCustom && cropRatioW === p.w && cropRatioH === p.h }
+                ]"
                 @click="applyCropPreset(p)"
               >
                 {{ p.label }}
               </label>
-              <label
-                :class="['format-tag', { selected: cropCustom }]"
-                @click="toggleCropCustom"
-              >
+              <label :class="['format-tag', { selected: cropCustom }]" @click="toggleCropCustom">
                 自定义
               </label>
             </div>
             <div v-if="cropCustom" class="panel-row">
-              <input type="number" v-model.number="cropRatioW" min="1" />
+              <input v-model.number="cropRatioW" type="number" min="1" />
               <span class="ratio-sep">:</span>
-              <input type="number" v-model.number="cropRatioH" min="1" />
+              <input v-model.number="cropRatioH" type="number" min="1" />
             </div>
             <button class="panel-run" @click="runProportionalCrop">执行</button>
           </div>
@@ -588,37 +623,25 @@ function clearProcessFolder() {
             <div class="panel-hint">dHash + pHash + 颜色直方图筛选，ORB + RANSAC 几何验证</div>
             <div class="panel-row">
               <label>dHash阈值</label>
-              <input
-                type="range"
-                min="1"
-                max="20"
-                step="1"
-                v-model.number="dedupHashThresh"
-              />
+              <input v-model.number="dedupHashThresh" type="range" min="1" max="20" step="1" />
               <span class="range-value">{{ dedupHashThresh }}</span>
             </div>
             <div class="panel-row">
               <label>pHash阈值</label>
-              <input
-                type="range"
-                min="1"
-                max="20"
-                step="1"
-                v-model.number="dedupPhashThresh"
-              />
+              <input v-model.number="dedupPhashThresh" type="range" min="1" max="20" step="1" />
               <span class="range-value">{{ dedupPhashThresh }}</span>
             </div>
-              <div class="panel-row">
-                <label>颜色阈值</label>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="0.9"
-                  step="0.05"
-                  v-model.number="dedupColorThresh"
-                />
-                <span class="range-value">{{ dedupColorThresh.toFixed(2) }}</span>
-              </div>
+            <div class="panel-row">
+              <label>颜色阈值</label>
+              <input
+                v-model.number="dedupColorThresh"
+                type="range"
+                min="0.1"
+                max="0.9"
+                step="0.05"
+              />
+              <span class="range-value">{{ dedupColorThresh.toFixed(2) }}</span>
+            </div>
             <button class="panel-run" @click="deduplicate">执行</button>
           </div>
         </div>
@@ -653,13 +676,16 @@ function clearProcessFolder() {
               <div class="panel-row format-options">
                 <label
                   :class="['format-tag', { selected: !clusterFusion && clusterMethod === 'style' }]"
-                  @click="clusterFusion = false; clusterMethod = 'style'"
+                  @click="setClusterMethod('style')"
                 >
                   风格
                 </label>
                 <label
-                  :class="['format-tag', { selected: !clusterFusion && clusterMethod === 'semantic' }]"
-                  @click="clusterFusion = false; clusterMethod = 'semantic'"
+                  :class="[
+                    'format-tag',
+                    { selected: !clusterFusion && clusterMethod === 'semantic' }
+                  ]"
+                  @click="setClusterMethod('semantic')"
                 >
                   语义
                 </label>
@@ -675,23 +701,41 @@ function clearProcessFolder() {
             <div v-if="clusterFusion" class="panel-section fusion-weights">
               <div class="panel-row">
                 <label>风格</label>
-                <input type="range" min="0" max="1" step="0.1" v-model.number="clusterFusionStyle" />
+                <input
+                  v-model.number="clusterFusionStyle"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                />
                 <span class="range-value">{{ clusterFusionStyle.toFixed(1) }}</span>
               </div>
               <div class="panel-row">
                 <label>语义</label>
-                <input type="range" min="0" max="1" step="0.1" v-model.number="clusterFusionSemantic" />
+                <input
+                  v-model.number="clusterFusionSemantic"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                />
                 <span class="range-value">{{ clusterFusionSemantic.toFixed(1) }}</span>
               </div>
               <div class="panel-row">
                 <label>颜色</label>
-                <input type="range" min="0" max="1" step="0.1" v-model.number="clusterFusionColor" />
+                <input
+                  v-model.number="clusterFusionColor"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                />
                 <span class="range-value">{{ clusterFusionColor.toFixed(1) }}</span>
               </div>
             </div>
             <div class="panel-row">
               <label>分组数</label>
-              <input type="number" v-model.number="clusterK" min="2" max="50" />
+              <input v-model.number="clusterK" type="number" min="2" max="50" />
             </div>
             <button class="panel-run" @click="runCluster">执行</button>
           </div>
@@ -841,7 +885,6 @@ function clearProcessFolder() {
   line-height: 1.4;
 }
 
-
 .cluster-panel .format-tag {
   flex: 1;
   text-align: center;
@@ -866,7 +909,7 @@ function clearProcessFolder() {
   gap: 12px;
   padding: 10px 12px;
   margin: 8px 0 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--color-error-light);
   border: 1px solid var(--color-error-border);
   color: var(--color-error);
@@ -892,7 +935,7 @@ function clearProcessFolder() {
   bottom: 6px;
   left: 6px;
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
   font-weight: 600;
   color: #fff;

@@ -33,7 +33,11 @@ const nonEmptyBuckets = computed(() => buckets.value.filter((bucket) => bucket.c
 const tomlText = computed(() => result.value?.toml || '')
 const activeBucket = computed(() => {
   if (activeBucketIndex.value === null) return nonEmptyBuckets.value[0] || null
-  return buckets.value.find((bucket) => bucket.index === activeBucketIndex.value) || nonEmptyBuckets.value[0] || null
+  return (
+    buckets.value.find((bucket) => bucket.index === activeBucketIndex.value) ||
+    nonEmptyBuckets.value[0] ||
+    null
+  )
 })
 const selectedCount = computed(() => selectedBucketImages.value.size)
 const activeBucketImages = computed(() => activeBucket.value?.images || [])
@@ -114,7 +118,9 @@ function clearImageSelection() {
 function selectDroppedTail() {
   const bucket = activeBucket.value
   if (!bucket?.dropped) return
-  selectedBucketImages.value = new Set(bucket.images.slice(-bucket.dropped).map((image) => image.path))
+  selectedBucketImages.value = new Set(
+    bucket.images.slice(-bucket.dropped).map((image) => image.path)
+  )
 }
 
 function thumbnailFor(image) {
@@ -124,10 +130,12 @@ function thumbnailFor(image) {
 async function loadVisibleThumbnails() {
   const missing = visibleBucketImages.value.filter((image) => !thumbnailMap.value[image.path])
   if (!missing.length) return
-  const entries = await Promise.all(missing.map(async (image) => {
-    const url = await window.api.generateThumbnail(image.path)
-    return [image.path, url || image.url]
-  }))
+  const entries = await Promise.all(
+    missing.map(async (image) => {
+      const url = await window.api.generateThumbnail(image.path)
+      return [image.path, url || image.url]
+    })
+  )
   thumbnailMap.value = {
     ...thumbnailMap.value,
     ...Object.fromEntries(entries)
@@ -145,9 +153,13 @@ function onBucketImageScroll(event) {
   updateGridMetrics()
 }
 
-watch([visibleBucketImages, activeBucketIndex], () => {
-  loadVisibleThumbnails().catch(() => {})
-}, { immediate: false })
+watch(
+  [visibleBucketImages, activeBucketIndex],
+  () => {
+    loadVisibleThumbnails().catch(() => {})
+  },
+  { immediate: false }
+)
 
 async function chooseFolder() {
   const folder = await window.api.selectFolder()
@@ -183,7 +195,8 @@ async function analyze() {
 
     result.value = response
     thumbnailMap.value = {}
-    activeBucketIndex.value = response.result.buckets.find((bucket) => bucket.count > 0)?.index ?? null
+    activeBucketIndex.value =
+      response.result.buckets.find((bucket) => bucket.count > 0)?.index ?? null
     scrollTop.value = 0
     if (gridRef.value) gridRef.value.scrollTop = 0
     selectedBucketImages.value = new Set()
@@ -260,8 +273,8 @@ async function saveToml() {
     <section class="bucket-toolbar">
       <div class="bucket-folder">
         <FolderRow
-          label="目录"
           v-model="folderPath"
+          label="目录"
           placeholder="选择训练集目录"
           @browse="chooseFolder"
         />
@@ -271,7 +284,11 @@ async function saveToml() {
           <input v-model="recursive" type="checkbox" />
           <span>递归</span>
         </label>
-        <button class="action-btn icon-action primary" :disabled="analyzing || !folderPath" @click="analyze">
+        <button
+          class="action-btn icon-action primary"
+          :disabled="analyzing || !folderPath"
+          @click="analyze"
+        >
           <Play :size="15" />
           {{ analyzing ? '分析中' : '分析' }}
         </button>
@@ -302,11 +319,23 @@ async function saveToml() {
       </label>
       <div class="config-field">
         <span>min_ar</span>
-        <input v-model.number="minAr" type="number" min="0.01" step="0.001" :disabled="useRecommendedRange" />
+        <input
+          v-model.number="minAr"
+          type="number"
+          min="0.01"
+          step="0.001"
+          :disabled="useRecommendedRange"
+        />
       </div>
       <div class="config-field">
         <span>max_ar</span>
-        <input v-model.number="maxAr" type="number" min="0.01" step="0.001" :disabled="useRecommendedRange" />
+        <input
+          v-model.number="maxAr"
+          type="number"
+          min="0.01"
+          step="0.001"
+          :disabled="useRecommendedRange"
+        />
       </div>
     </section>
 
@@ -334,7 +363,10 @@ async function saveToml() {
         </div>
         <div class="metric">
           <span>推荐范围</span>
-          <strong>{{ formatNumber(result.stats.recommendedMinAr) }} - {{ formatNumber(result.stats.recommendedMaxAr) }}</strong>
+          <strong
+            >{{ formatNumber(result.stats.recommendedMinAr) }} -
+            {{ formatNumber(result.stats.recommendedMaxAr) }}</strong
+          >
         </div>
       </section>
 
@@ -369,7 +401,9 @@ async function saveToml() {
               </span>
               <span>{{ bucket.used }}</span>
               <span>{{ bucket.dropped }}</span>
-              <span :class="['bucket-status', statusForBucket(bucket)]">{{ statusForBucket(bucket) }}</span>
+              <span :class="['bucket-status', statusForBucket(bucket)]">{{
+                statusForBucket(bucket)
+              }}</span>
             </div>
           </div>
         </div>
@@ -379,9 +413,25 @@ async function saveToml() {
             <div class="section-title with-actions">
               <span>{{ activeBucket ? `${activeBucket.ratioLabel} 桶图片` : '桶图片' }}</span>
               <div class="bucket-image-actions">
-                <button class="mini-btn" :disabled="!activeBucket?.dropped" @click="selectDroppedTail">选尾数</button>
-                <button class="mini-btn" :disabled="selectedCount === 0" @click="clearImageSelection">清空</button>
-                <button class="mini-btn danger" :disabled="selectedCount === 0 || deleting" @click="deleteSelectedImages">
+                <button
+                  class="mini-btn"
+                  :disabled="!activeBucket?.dropped"
+                  @click="selectDroppedTail"
+                >
+                  选尾数
+                </button>
+                <button
+                  class="mini-btn"
+                  :disabled="selectedCount === 0"
+                  @click="clearImageSelection"
+                >
+                  清空
+                </button>
+                <button
+                  class="mini-btn danger"
+                  :disabled="selectedCount === 0 || deleting"
+                  @click="deleteSelectedImages"
+                >
                   <Trash2 :size="13" />
                   {{ deleting ? '删除中' : `删除 ${selectedCount || ''}` }}
                 </button>
@@ -399,10 +449,17 @@ async function saveToml() {
               class="bucket-image-scroll"
               @scroll="onBucketImageScroll"
             >
-              <div class="bucket-image-spacer" :style="{ height: `${Math.ceil(activeBucketImages.length / gridColumnCount) * (cardHeight + gridGap)}px` }">
+              <div
+                class="bucket-image-spacer"
+                :style="{
+                  height: `${Math.ceil(activeBucketImages.length / gridColumnCount) * (cardHeight + gridGap)}px`
+                }"
+              >
                 <div
                   class="bucket-image-window"
-                  :style="{ transform: `translateY(${Math.floor(visibleRange.start / gridColumnCount) * (cardHeight + gridGap)}px)` }"
+                  :style="{
+                    transform: `translateY(${Math.floor(visibleRange.start / gridColumnCount) * (cardHeight + gridGap)}px)`
+                  }"
                 >
                   <button
                     v-for="image in visibleBucketImages"
@@ -412,7 +469,12 @@ async function saveToml() {
                     :title="`${image.name}\n${image.width}×${image.height}`"
                     @click="toggleImageSelection(image)"
                   >
-                    <img v-if="thumbnailFor(image)" :src="thumbnailFor(image)" :alt="image.name" loading="lazy" />
+                    <img
+                      v-if="thumbnailFor(image)"
+                      :src="thumbnailFor(image)"
+                      :alt="image.name"
+                      loading="lazy"
+                    />
                     <span v-else class="thumb-placeholder"></span>
                     <span class="bucket-image-check"></span>
                     <span class="bucket-image-size">{{ image.width }}×{{ image.height }}</span>
@@ -429,9 +491,9 @@ async function saveToml() {
               <span>min_ar</span><strong>{{ formatNumber(summary.minAr) }}</strong>
               <span>max_ar</span><strong>{{ formatNumber(summary.maxAr) }}</strong>
               <span>num_ar_buckets</span><strong>{{ summary.numArBuckets }}</strong>
-              <span>ar_buckets</span><strong>{{ arBucketText }}</strong>
-              <span>resolutions</span><strong>[{{ summary.baseResolution }}]</strong>
-              <span>frame_buckets</span><strong>[1]</strong>
+              <span>ar_buckets</span><strong>{{ arBucketText }}</strong> <span>resolutions</span
+              ><strong>[{{ summary.baseResolution }}]</strong> <span>frame_buckets</span
+              ><strong>[1]</strong>
             </div>
           </div>
 
@@ -471,11 +533,12 @@ async function saveToml() {
 }
 
 .bucket-toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 12px;
+  border-bottom: none;
   flex-shrink: 0;
 }
 
@@ -680,7 +743,7 @@ async function saveToml() {
   height: 4px;
   max-width: 72px;
   margin-right: 8px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   background: var(--color-active-bg);
   vertical-align: middle;
 }
@@ -855,7 +918,7 @@ async function saveToml() {
   width: 14px;
   height: 14px;
   border: 1.5px solid rgba(255, 255, 255, 0.85);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.32);
 }
 

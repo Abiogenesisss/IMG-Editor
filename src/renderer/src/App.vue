@@ -2,7 +2,24 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import IconButton from './components/IconButton.vue'
-import { Copy, Minus, Moon, Settings, Square, Sun, X } from 'lucide-vue-next'
+import {
+  Cable,
+  Copy,
+  Download,
+  LayoutGrid,
+  Maximize2,
+  MessageSquareText,
+  Minus,
+  Moon,
+  Settings,
+  Sparkles,
+  Square,
+  Sun,
+  Tags,
+  WandSparkles,
+  Waypoints,
+  X
+} from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
@@ -13,17 +30,21 @@ const appVersion = ref('')
 
 // --- 主题 ---
 const theme = ref(localStorage.getItem('app-theme') || 'light') // 'light' | 'dark'
-watch(theme, (val) => {
-  localStorage.setItem('app-theme', val)
-  document.documentElement.setAttribute('data-theme', val)
-}, { immediate: true })
+watch(
+  theme,
+  (val) => {
+    localStorage.setItem('app-theme', val)
+    document.documentElement.setAttribute('data-theme', val)
+  },
+  { immediate: true }
+)
 
 function toggleTheme(event) {
   const isDark = theme.value === 'dark'
 
   // 检查浏览器是否支持 View Transitions API
-  const isAppearanceTransition = document.startViewTransition
-      && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const isAppearanceTransition =
+    document.startViewTransition && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   if (!isAppearanceTransition || !event) {
     theme.value = isDark ? 'light' : 'dark'
@@ -33,10 +54,7 @@ function toggleTheme(event) {
   // 获取点击位置作为动画圆心
   const x = event.clientX
   const y = event.clientY
-  const endRadius = Math.hypot(
-      Math.max(x, innerWidth - x),
-      Math.max(y, innerHeight - y)
-  )
+  const endRadius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))
 
   const transition = document.startViewTransition(async () => {
     theme.value = isDark ? 'light' : 'dark'
@@ -44,25 +62,18 @@ function toggleTheme(event) {
   })
 
   transition.ready.then(() => {
-    const clipPath = [
-      `circle(0px at ${x}px ${y}px)`,
-      `circle(${endRadius}px at ${x}px ${y}px)`
-    ]
+    const clipPath = [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`]
 
     document.documentElement.animate(
-        {
-          clipPath: isDark
-              ? [...clipPath].reverse()
-              : clipPath
-        },
-        {
-          duration: 400,
-          easing: 'ease-in-out',
-          fill: 'forwards',
-          pseudoElement: isDark
-              ? '::view-transition-old(root)'
-              : '::view-transition-new(root)'
-        }
+      {
+        clipPath: isDark ? [...clipPath].reverse() : clipPath
+      },
+      {
+        duration: 400,
+        easing: 'ease-in-out',
+        fill: 'forwards',
+        pseudoElement: isDark ? '::view-transition-old(root)' : '::view-transition-new(root)'
+      }
     )
   })
 }
@@ -79,21 +90,26 @@ const updateVersion = ref('')
 const updatePercent = ref(0)
 
 const allNavItems = [
-  { path: '/grab', label: '图片抓取' },
-  { path: '/process', label: '图片处理' },
-  { path: '/augment', label: '数据增强' },
-  { path: '/upscale', label: '超分辨率' },
-  { path: '/tagger', label: '图片打标' },
-  { path: '/caption', label: 'Caption' },
-  { path: '/buckets', label: '分桶分析' },
-  { path: '/workflow', label: '工作流' }
+  { path: '/grab', label: '图片抓取', icon: Download, color: '#00b8c8' },
+  { path: '/process', label: '图片处理', icon: WandSparkles, color: '#f25b9d' },
+  { path: '/augment', label: '数据增强', icon: Sparkles, color: '#f4c430' },
+  { path: '/upscale', label: '超分辨率', icon: Maximize2, color: '#2f7893' },
+  { path: '/tagger', label: '图片打标', icon: Tags, color: '#22c7a9' },
+  { path: '/caption', label: 'Caption', icon: MessageSquareText, color: '#f07349' },
+  { path: '/buckets', label: '分桶分析', icon: LayoutGrid, color: '#e45aa5' },
+  { path: '/workflow', label: '工作流', icon: Waypoints, color: '#45a6ff' },
+  { path: '/tunnel', label: '隧道工具', icon: Cable, color: '#8b5cf6' }
 ]
+
+const settingsNavItem = { path: '/settings', label: '设置', icon: Settings, color: '#2f7893' }
 
 // --- 菜单显示设置 ---
 function loadMenuVisible() {
   try {
     return JSON.parse(localStorage.getItem('menu-visible') || '{}')
-  } catch { return {} }
+  } catch {
+    return {}
+  }
 }
 
 const menuVisibleConfig = ref(loadMenuVisible())
@@ -107,6 +123,13 @@ function navigateTo(path) {
   activeNav.value = path
   router.push(path)
 }
+
+watch(
+  () => route.path,
+  (path) => {
+    activeNav.value = path
+  }
+)
 
 // 窗口控制
 function minimize() {
@@ -143,7 +166,9 @@ function onMenuStorageChange(e) {
 }
 
 onMounted(() => {
-  window.api.getAppVersion().then(v => { appVersion.value = v })
+  window.api.getAppVersion().then((v) => {
+    appVersion.value = v
+  })
   window.addEventListener('storage', onMenuStorageChange)
   unsubscribe = window.api.onWindowStateChange((maximized) => {
     isMaximized.value = maximized
@@ -186,70 +211,104 @@ onUnmounted(() => {
       <div class="header-drag"></div>
       <div class="header-right">
         <IconButton :icon="Minus" variant="window" title="最小化" :size="14" @click="minimize" />
-        <IconButton :icon="isMaximized ? Copy : Square" variant="window" title="最大化" :size="14" @click="toggleMaximize" />
+        <IconButton
+          :icon="isMaximized ? Copy : Square"
+          variant="window"
+          title="最大化"
+          :size="14"
+          @click="toggleMaximize"
+        />
         <IconButton :icon="X" variant="window" tone="close" title="关闭" :size="14" @click="quit" />
       </div>
     </header>
 
-    <!-- 内容区 -->
-    <main class="app-main">
-      <!-- 更新提示条 -->
-      <div v-if="updateStatus === 'available'" class="update-bar">
-        <span>发现新版本 {{ updateVersion }}，是否下载？</span>
-        <button class="update-btn" @click="doDownload">下载</button>
-        <button class="update-btn dismiss" @click="dismissUpdate">忽略</button>
-      </div>
-      <div v-else-if="updateStatus === 'downloading'" class="update-bar">
-        <span>正在下载更新... {{ updatePercent }}%</span>
-        <div class="update-progress"><div class="update-progress-inner" :style="{ width: updatePercent + '%' }"></div></div>
-      </div>
-      <div v-else-if="updateStatus === 'downloaded'" class="update-bar">
-        <span>下载完成，重启以完成更新</span>
-        <button class="update-btn" @click="doInstall">立即重启</button>
-        <button class="update-btn dismiss" @click="dismissUpdate">稍后</button>
-      </div>
-      <!-- 顶部工具栏区域 -->
-      <div class="toolbar-row">
-        <!-- 左侧占位，保持导航栏居中 -->
-        <div class="toolbar-utils-placeholder"></div>
-        <!-- 中间：页面导航 -->
-        <div class="floating-toolbar">
+    <div class="app-shell">
+      <aside class="app-rail" aria-label="主导航">
+        <nav class="rail-nav">
           <button
             v-for="item in navItems"
             :key="item.path"
-            :class="['toolbar-btn', { active: activeNav === item.path }]"
+            :class="['rail-btn', { active: activeNav === item.path }]"
+            :style="{ '--rail-accent': item.color }"
+            :title="item.label"
+            :aria-label="item.label"
             @click="navigateTo(item.path)"
           >
-            {{ item.label }}
+            <component :is="item.icon" :size="19" :stroke-width="2.2" aria-hidden="true" />
+            <span class="rail-tooltip">{{ item.label }}</span>
+          </button>
+        </nav>
+
+        <div class="rail-footer">
+          <button
+            class="rail-btn rail-tool"
+            :style="{ '--rail-accent': theme === 'dark' ? '#f4c430' : '#00b8c8' }"
+            :title="theme === 'light' ? '深色模式' : '浅色模式'"
+            :aria-label="theme === 'light' ? '深色模式' : '浅色模式'"
+            @click="toggleTheme"
+          >
+            <component
+              :is="theme === 'dark' ? Moon : Sun"
+              :size="18"
+              :stroke-width="2.2"
+              aria-hidden="true"
+            />
+            <span class="rail-tooltip">{{ theme === 'light' ? '深色模式' : '浅色模式' }}</span>
+          </button>
+          <button
+            :class="['rail-btn', 'rail-tool', { active: activeNav === settingsNavItem.path }]"
+            :style="{ '--rail-accent': settingsNavItem.color }"
+            :title="settingsNavItem.label"
+            :aria-label="settingsNavItem.label"
+            @click="openSettings"
+          >
+            <Settings :size="18" :stroke-width="2.2" aria-hidden="true" />
+            <span class="rail-tooltip">{{ settingsNavItem.label }}</span>
           </button>
         </div>
-        <!-- 右侧：主题 + 设置 -->
-        <div class="toolbar-utils">
-          <!-- 主题切换 -->
-          <IconButton
-            :icon="theme === 'dark' ? Moon : Sun"
-            variant="toolbar"
-            :title="theme === 'light' ? '深色模式' : '浅色模式'"
-            @click="toggleTheme"
-          />
-          <!-- 设置 -->
-          <IconButton
-            :icon="Settings"
-            variant="toolbar"
-            :active="activeNav === '/settings'"
-            title="设置"
-            @click="openSettings"
-          />
+      </aside>
+
+      <!-- 内容区 -->
+      <main class="app-main">
+        <!-- 更新提示条 -->
+        <div v-if="updateStatus === 'available'" class="update-bar">
+          <span>发现新版本 {{ updateVersion }}，是否下载？</span>
+          <button class="update-btn" @click="doDownload">下载</button>
+          <button class="update-btn dismiss" @click="dismissUpdate">忽略</button>
         </div>
-      </div>
-      <router-view v-slot="{ Component }">
-        <Transition name="route-fade" mode="out-in">
-          <keep-alive :include="['ImageGrab', 'ImageProcess', 'DataAugment', 'ImageTagger', 'ImageUpscale', 'ImageCaption', 'BucketBalancer', 'WorkflowCanvas']" :max="10">
-            <component :is="Component" class="route-view" />
-          </keep-alive>
-        </Transition>
-      </router-view>
-    </main>
+        <div v-else-if="updateStatus === 'downloading'" class="update-bar">
+          <span>正在下载更新... {{ updatePercent }}%</span>
+          <div class="update-progress">
+            <div class="update-progress-inner" :style="{ width: updatePercent + '%' }"></div>
+          </div>
+        </div>
+        <div v-else-if="updateStatus === 'downloaded'" class="update-bar">
+          <span>下载完成，重启以完成更新</span>
+          <button class="update-btn" @click="doInstall">立即重启</button>
+          <button class="update-btn dismiss" @click="dismissUpdate">稍后</button>
+        </div>
+        <router-view v-slot="{ Component }">
+          <Transition name="route-fade" mode="out-in">
+            <keep-alive
+              :include="[
+                'ImageGrab',
+                'ImageProcess',
+                'DataAugment',
+                'ImageTagger',
+                'ImageUpscale',
+                'ImageCaption',
+                'BucketBalancer',
+                'WorkflowCanvas',
+                'TunnelTool'
+              ]"
+              :max="10"
+            >
+              <component :is="Component" class="route-view" />
+            </keep-alive>
+          </Transition>
+        </router-view>
+      </main>
+    </div>
   </div>
 </template>
 
@@ -259,39 +318,60 @@ onUnmounted(() => {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  position: relative;
+  background: var(--color-background);
+}
+
+.app-layout::before {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app-layout::before {
+  inset: 48px 28px 28px 86px;
+  background-image:
+    linear-gradient(rgba(0, 185, 200, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 185, 200, 0.07) 1px, transparent 1px);
+  background-size: 36px 36px;
+  opacity: 0.45;
 }
 
 /* 顶部栏：仅拖拽区域 + 窗口控制按钮 */
 .app-header {
   display: flex;
   align-items: center;
-  height: 36px;
+  height: 38px;
   padding: 0;
   background: var(--color-header-bg);
+  border-bottom: 1px solid var(--color-border-light);
   flex-shrink: 0;
   user-select: none;
+  z-index: 3;
 }
 
 .header-brand {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px;
+  gap: 8px;
+  padding: 0 12px;
   height: 100%;
   -webkit-app-region: no-drag;
 }
 
 .brand-icon {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
 }
 
 .brand-title {
   font-size: 12px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
+  font-weight: 700;
+  color: var(--color-text);
   white-space: nowrap;
+  letter-spacing: 0.2px;
 }
 
 .header-drag {
@@ -315,11 +395,13 @@ onUnmounted(() => {
   width: 46px;
   height: 100%;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .window-btn:hover {
@@ -332,118 +414,181 @@ onUnmounted(() => {
   background: #e53935;
 }
 
+.app-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  z-index: 1;
+}
+
+.app-rail {
+  width: 64px;
+  flex-shrink: 0;
+  padding: 14px 9px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  box-shadow: none;
+  position: relative;
+  z-index: 4;
+}
+
+.app-rail::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: var(--pjsk-divider-size);
+  border-radius: 0;
+  background: var(--pjsk-divider-gradient-y);
+  opacity: 1;
+}
+
+.rail-nav,
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.rail-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.rail-btn {
+  --rail-accent: var(--color-accent);
+  position: relative;
+  width: 44px;
+  height: 40px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.rail-btn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 0;
+  background: var(--rail-accent);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.rail-btn::after {
+  content: '';
+  display: none;
+}
+
+.rail-btn svg {
+  position: relative;
+  z-index: 1;
+}
+
+.rail-btn:hover {
+  color: var(--rail-accent);
+  background: var(--color-surface-hover);
+  border-color: var(--color-border);
+}
+
+.rail-btn:hover::before {
+  opacity: 1;
+}
+
+.rail-btn.active {
+  color: var(--rail-accent);
+  background: #ffffff;
+  border-color: var(--rail-accent);
+  box-shadow: none;
+}
+
+.rail-btn.active::before {
+  opacity: 1;
+}
+
+.rail-tool {
+  width: 44px;
+  height: 40px;
+  border-radius: 2px;
+}
+
+.rail-tooltip {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translate(-4px, -50%);
+  padding: 6px 10px;
+  border-radius: 2px;
+  color: #ffffff;
+  background: #18384a;
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+  z-index: 40;
+}
+
+.rail-tooltip::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.rail-btn:hover .rail-tooltip,
+.rail-btn:focus-visible .rail-tooltip {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
 /* 内容区 */
 .app-main {
   flex: 1;
   overflow: hidden;
-  background: var(--color-background);
-  padding: 0 24px;
+  background: transparent;
+  padding: 18px 20px 16px;
   position: relative;
   display: flex;
   flex-direction: column;
-}
-
-/* 顶部工具栏行：三列布局 */
-.toolbar-row {
-  display: flex;
-  align-items: center;
-  margin: 8px 0 0;
-  flex-shrink: 0;
-  z-index: 100;
-}
-
-/* 左侧工具按钮组 */
-.toolbar-utils {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  box-shadow: 0 1px 3px var(--color-shadow);
-  flex-shrink: 0;
-}
-
-/* 右侧占位，和左侧等宽以保持导航居中 */
-.toolbar-utils-placeholder {
-  width: 82px; /* 与 toolbar-utils 实际宽度匹配 */
-  flex-shrink: 0;
-}
-
-/* 悬浮导航栏 */
-.floating-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  max-width: calc(100% - 180px);
-  overflow-x: auto;
-  margin: 0 auto;
-  box-shadow: 0 1px 3px var(--color-shadow);
-}
-
-.toolbar-btn {
-  flex-shrink: 0;
-  width: var(--ui-nav-button-width);
-  height: var(--ui-nav-button-height);
-  padding: 0 10px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.toolbar-btn:hover {
-  color: var(--color-text);
-  background: var(--color-surface-hover);
-}
-
-.toolbar-btn.active {
-  color: var(--color-active-text);
-  background: var(--color-active-bg);
-  font-weight: 500;
-}
-
-/* 工具栏图标按钮 */
-.toolbar-icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
-  padding: 0;
-}
-
-.toolbar-icon-btn:hover {
-  color: var(--color-text);
-  background: var(--color-surface-hover);
-}
-
-.toolbar-icon-btn.active {
-  color: var(--color-info);
-  background: var(--color-info-light);
+  z-index: 1;
 }
 
 .route-view {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
+  z-index: 1;
 }
 
 /* 路由切换过渡动画 */
@@ -466,19 +611,22 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 8px 14px;
-  margin: 8px 0 0;
-  background: var(--color-primary-light);
+  margin: 0 0 10px;
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-left: 4px solid var(--color-accent);
+  border-radius: 2px;
   font-size: 13px;
   color: var(--color-text);
   flex-shrink: 0;
+  box-shadow: none;
+  z-index: 2;
 }
 
 .update-btn {
   padding: 3px 12px;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 2px;
   background: #4f46e5;
   color: #fff;
   font-size: 12px;
@@ -503,14 +651,37 @@ onUnmounted(() => {
   flex: 1;
   height: 6px;
   background: var(--color-border);
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .update-progress-inner {
   height: 100%;
-  background: #4f46e5;
-  border-radius: 3px;
+  background: linear-gradient(90deg, #00b9c8 0 36%, #f25b9d 36% 72%, #f4c430 72% 100%);
+  border-radius: 2px;
   transition: width 0.3s ease;
+}
+
+[data-theme='dark'] .app-layout {
+  background: var(--color-background);
+}
+
+[data-theme='dark'] .app-rail {
+  background: var(--color-surface);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .rail-btn.active {
+  background: var(--color-surface-soft);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .rail-tooltip {
+  background: #eefcff;
+  color: #12313f;
+}
+
+[data-theme='dark'] .update-bar {
+  background: var(--color-surface);
 }
 </style>

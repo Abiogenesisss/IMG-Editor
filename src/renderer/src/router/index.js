@@ -46,6 +46,11 @@ const routes = [
     component: () => import('../views/WorkflowCanvas.vue')
   },
   {
+    path: '/tunnel',
+    name: 'TunnelTool',
+    component: () => import('../views/TunnelTool.vue')
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('../views/Settings.vue')

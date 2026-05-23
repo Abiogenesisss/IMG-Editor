@@ -1,4 +1,13 @@
-import { ref, shallowReactive, computed, watch, onUnmounted, onDeactivated, onActivated, nextTick } from 'vue'
+import {
+  ref,
+  shallowReactive,
+  computed,
+  watch,
+  onUnmounted,
+  onDeactivated,
+  onActivated,
+  nextTick
+} from 'vue'
 
 export function useImageBrowser(options = {}) {
   const { onProgress } = options
@@ -137,7 +146,7 @@ export function useImageBrowser(options = {}) {
 
     // 强制清理以触发DOM重绘与IntersectionObserver的重新计算，解决由于系统文件夹对话框导致主窗口失去焦点被Chromium节流导致的只显示加载骨架的问题
     images.value = []
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 50))
     if (generation !== thumbLoadGeneration) return
 
     images.value = list

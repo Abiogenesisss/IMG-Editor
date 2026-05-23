@@ -2,6 +2,7 @@ import { autoUpdater } from 'electron-updater'
 import { ipcMain, app } from 'electron'
 import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { prepareForUpdateRestart } from './ipc'
 import { getMainWindow } from './windowManager'
 
 // 自动检测更新开关（在 setupAutoUpdater 之前声明）
@@ -69,8 +70,14 @@ export function setupAutoUpdater() {
   })
 
   // 渲染进程请求安装更新（退出并安装）
-  ipcMain.handle('install-update', () => {
-    autoUpdater.quitAndInstall()
+  ipcMain.handle('install-update', async () => {
+    try {
+      await prepareForUpdateRestart()
+      autoUpdater.quitAndInstall(false, true)
+      return true
+    } catch {
+      return false
+    }
   })
 
   // 渲染进程请求获取自动检测更新设置
@@ -84,7 +91,9 @@ export function setupAutoUpdater() {
     try {
       const settingsPath = join(app.getPath('userData'), 'auto-update-settings.json')
       writeFileSync(settingsPath, JSON.stringify({ autoCheck: enabled }), 'utf-8')
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return true
   })
 

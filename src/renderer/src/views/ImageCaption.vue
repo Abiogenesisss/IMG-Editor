@@ -2,7 +2,14 @@
 import { ref, computed, watch, onMounted, onActivated, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useImageBrowser } from '../composables/useImageBrowser'
+import { useGridObserver } from '../composables/useGridObserver'
 import { useLocalStorage } from '../composables/useLocalStorage'
+import {
+  API_CONFIGS_UPDATED_EVENT,
+  loadApiConfigs,
+  saveApiConfigs,
+  serializeApiConfigs
+} from '../services/apiConfigs'
 import FolderRow from '../components/FolderRow.vue'
 import IconButton from '../components/IconButton.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
@@ -27,13 +34,29 @@ function applyCaptionResult(filePath, caption) {
 }
 
 const {
-  inputFolder, outputFolder, images, selectAll,
-  thumbnails, imageCount, selectedCount, getTargetFiles,
-  chooseInputFolder, chooseOutputFolder, loadInputFolder,
+  inputFolder,
+  outputFolder,
+  images,
+  selectAll,
+  thumbnails,
+  imageCount,
+  selectedCount,
+  getTargetFiles,
+  chooseInputFolder,
+  chooseOutputFolder,
+  loadInputFolder,
   clearCurrentFolder,
-  toggleSelect, toggleSelectAll, isSelected, deleteSelected,
-  processingAction, progressDone, progressTotal,
-  refreshing, refreshImages, abortTask, observeGrid
+  toggleSelect,
+  toggleSelectAll,
+  isSelected,
+  deleteSelected,
+  processingAction,
+  progressDone,
+  progressTotal,
+  refreshing,
+  refreshImages,
+  abortTask,
+  observeGrid
 } = useImageBrowser({
   onProgress(data) {
     if (data.ok && data.file && data.caption) {
@@ -42,24 +65,9 @@ const {
   }
 })
 
-const gridRef = ref(null)
+const gridRef = useGridObserver(images, observeGrid)
 
 // ===================== 全局 API 配置 =====================
-async function loadApiConfigs() {
-  try {
-    const legacyRaw = localStorage.getItem('api-configs')
-    if (legacyRaw !== null) {
-      const legacy = JSON.parse(legacyRaw || '[]')
-      const result = await window.api.migrateApiConfigs(Array.isArray(legacy) ? legacy : [])
-      localStorage.removeItem('api-configs')
-      return result?.configs || []
-    }
-    return await window.api.getApiConfigs()
-  } catch {
-    return []
-  }
-}
-
 const apiConfigs = ref([])
 const enabledConfigs = computed(() => apiConfigs.value.filter((c) => c.enabled))
 const hasEnabledConfig = computed(() => enabledConfigs.value.length > 0)
@@ -69,24 +77,17 @@ async function refreshApiConfigs() {
   apiConfigs.value = await loadApiConfigs()
 }
 
-function serializeApiConfigs(list) {
-  return (Array.isArray(list) ? list : []).map((config) => ({
-    id: config.id,
-    name: config.name,
-    model: config.model,
-    endpoint: config.endpoint,
-    apiKey: config.apiKey,
-    enabled: config.enabled !== false
-  }))
-}
-
 // ===================== API 选择 =====================
 const multiApiMode = useLocalStorage('caption-multi-api', false)
 const selectedApiId = useLocalStorage('caption-selected-api', '')
-const selectedApiIds = ref(new Set(
-  JSON.parse(localStorage.getItem('caption-selected-apis') || '[]')
-))
-watch(selectedApiIds, (v) => localStorage.setItem('caption-selected-apis', JSON.stringify([...v])), { deep: true })
+const selectedApiIds = ref(
+  new Set(JSON.parse(localStorage.getItem('caption-selected-apis') || '[]'))
+)
+watch(
+  selectedApiIds,
+  (v) => localStorage.setItem('caption-selected-apis', JSON.stringify([...v])),
+  { deep: true }
+)
 
 const selectedConfig = computed(() => {
   if (!selectedApiId.value) return firstEnabled.value
@@ -116,11 +117,10 @@ function selectApi(cfg) {
 }
 
 async function toggleApiEnabled(cfg) {
-  const next = apiConfigs.value.map((item) => (
+  const next = apiConfigs.value.map((item) =>
     item.id === cfg.id ? { ...item, enabled: !item.enabled } : item
-  ))
-  apiConfigs.value = await window.api.saveApiConfigs(serializeApiConfigs(next))
-  window.dispatchEvent(new CustomEvent('api-configs-updated'))
+  )
+  apiConfigs.value = await saveApiConfigs(next)
 }
 
 // ===================== 持久化配置 =====================
@@ -137,8 +137,10 @@ const topP = useLocalStorage('caption-topp', 0, { type: 'float' })
 const maxTokens = useLocalStorage('caption-maxtokens', 1024)
 const skipExisting = ref(true)
 const disableThink = useLocalStorage('caption-disable-think', false)
-const systemPrompt = useLocalStorage('caption-system-prompt',
-  'You are a professional image captioning assistant. Provide a detailed, natural language description of the image suitable for training image generation models.')
+const systemPrompt = useLocalStorage(
+  'caption-system-prompt',
+  'You are a professional image captioning assistant. Provide a detailed, natural language description of the image suitable for training image generation models.'
+)
 const userPrompt = useLocalStorage('caption-user-prompt', 'Please describe this image in detail.')
 
 // ===================== 本地模型状态 =====================
@@ -152,7 +154,10 @@ let pathCheckTimer = null
 
 function checkModelPath(val) {
   clearTimeout(pathCheckTimer)
-  if (!val) { pathStatus.value = ''; return }
+  if (!val) {
+    pathStatus.value = ''
+    return
+  }
   // 看起来像 HF ID（含 / 且无盘符前缀）
   if (/^[^\\:]+\/[^\\:]+$/.test(val) && !val.startsWith('/')) {
     pathStatus.value = 'hf'
@@ -162,7 +167,7 @@ function checkModelPath(val) {
   pathCheckTimer = setTimeout(async () => {
     try {
       const r = await window.api.checkPathExists(val)
-      pathStatus.value = (r.exists && r.isDirectory) ? 'valid' : 'invalid'
+      pathStatus.value = r.exists && r.isDirectory ? 'valid' : 'invalid'
     } catch {
       pathStatus.value = 'invalid'
     }
@@ -185,14 +190,20 @@ async function browseLocalModel() {
 // ===================== 初始化 =====================
 const route = useRoute()
 
-watch(() => images.value, async (imgs) => {
-  if (imgs.length === 0) { captionsMap.value = {}; dirtySet.value = new Set(); return }
-  captionsMap.value = { ...await window.api.batchReadTags(imgs.map((i) => i.path)) }
-})
+watch(
+  () => images.value,
+  async (imgs) => {
+    if (imgs.length === 0) {
+      captionsMap.value = {}
+      dirtySet.value = new Set()
+      return
+    }
+    captionsMap.value = { ...(await window.api.batchReadTags(imgs.map((i) => i.path))) }
+  }
+)
 
 onMounted(async () => {
-  if (gridRef.value) observeGrid(gridRef.value)
-  window.addEventListener('api-configs-updated', refreshApiConfigs)
+  window.addEventListener(API_CONFIGS_UPDATED_EVENT, refreshApiConfigs)
   await refreshApiConfigs()
   try {
     const st = await window.api.callPython('/local-model-status', {})
@@ -200,16 +211,22 @@ onMounted(async () => {
       localModelLoaded.value = true
       localModelInfo.value = st.info || null
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('api-configs-updated', refreshApiConfigs)
+  window.removeEventListener(API_CONFIGS_UPDATED_EVENT, refreshApiConfigs)
 })
 
-watch(() => route.path, (p) => { if (p === '/caption') refreshApiConfigs() })
+watch(
+  () => route.path,
+  (p) => {
+    if (p === '/caption') refreshApiConfigs()
+  }
+)
 onActivated(() => refreshApiConfigs())
-watch(() => images.value, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
 
 // ===================== 本地模型加载/卸载 =====================
 async function loadLocalModel() {
@@ -238,7 +255,11 @@ async function loadLocalModel() {
 }
 
 async function unloadLocalModel() {
-  try { await window.api.callPython('/local-model-unload', {}) } catch { /* ignore */ }
+  try {
+    await window.api.callPython('/local-model-unload', {})
+  } catch {
+    /* ignore */
+  }
   localModelLoaded.value = false
   localModelInfo.value = null
 }
@@ -254,26 +275,43 @@ async function captionSingle() {
   const filePath = editingImage.value.path
 
   if (captionMode.value === 'local') {
-    if (!localModelLoaded.value) { captionError.value = '请先加载本地模型'; return }
+    if (!localModelLoaded.value) {
+      captionError.value = '请先加载本地模型'
+      return
+    }
     const [sp, up, temp, tp, mt] = getCommonParams()
     await runCaptionTask('caption', () =>
       window.api.callPython('/local-caption-single', {
-        file: filePath, system_prompt: sp, user_prompt: up,
-        temperature: temp, top_p: tp, max_tokens: mt,
-        image_size: localImageSize.value || 1024, disable_think: disableThink.value || false
+        file: filePath,
+        system_prompt: sp,
+        user_prompt: up,
+        temperature: temp,
+        top_p: tp,
+        max_tokens: mt,
+        image_size: localImageSize.value || 1024,
+        disable_think: disableThink.value || false
       })
     )
   } else {
     await refreshApiConfigs()
     const cfg = selectedConfig.value
-    if (!cfg) { captionError.value = '请先在设置页面添加并启用 API 配置'; return }
+    if (!cfg) {
+      captionError.value = '请先在设置页面添加并启用 API 配置'
+      return
+    }
     const [sp, up, temp, tp, mt] = getCommonParams()
     await runCaptionTask('caption', () =>
       window.api.callPython('/caption-single', {
-        file: filePath, model: cfg.model, api_key: cfg.apiKey,
-        system_prompt: sp, user_prompt: up,
-        temperature: temp, top_p: tp, max_tokens: mt,
-        base_url: cfg.endpoint, disable_think: disableThink.value || false,
+        file: filePath,
+        model: cfg.model,
+        api_key: cfg.apiKey,
+        system_prompt: sp,
+        user_prompt: up,
+        temperature: temp,
+        top_p: tp,
+        max_tokens: mt,
+        base_url: cfg.endpoint,
+        disable_think: disableThink.value || false,
         image_size: apiImageSize.value || 1024
       })
     )
@@ -308,13 +346,21 @@ async function captionBatch() {
   const commonParams = getCommonParams()
 
   if (captionMode.value === 'local') {
-    if (!localModelLoaded.value) { captionError.value = '请先加载本地模型'; return }
+    if (!localModelLoaded.value) {
+      captionError.value = '请先加载本地模型'
+      return
+    }
     const [sp, up, temp, tp, mt] = commonParams
     await runBatchTask(() =>
       window.api.callPython('/local-caption-batch', {
-        files, system_prompt: sp, user_prompt: up,
-        temperature: temp, top_p: tp, max_tokens: mt,
-        image_size: localImageSize.value || 1024, disable_think: disableThink.value || false
+        files,
+        system_prompt: sp,
+        user_prompt: up,
+        temperature: temp,
+        top_p: tp,
+        max_tokens: mt,
+        image_size: localImageSize.value || 1024,
+        disable_think: disableThink.value || false
       })
     )
   } else {
@@ -330,9 +376,13 @@ function callOnlineBatch(files, commonParams) {
     if (configs.length === 0) throw new Error('请先选择至少一个 API 配置')
     if (configs.length > 1) {
       return window.api.callPython('/caption-batch-multi-api', {
-        files, api_configs: configs,
-        system_prompt: sp, user_prompt: up,
-        temperature: temp, top_p: tp, max_tokens: mt,
+        files,
+        api_configs: configs,
+        system_prompt: sp,
+        user_prompt: up,
+        temperature: temp,
+        top_p: tp,
+        max_tokens: mt,
         disable_think: disableThink.value || false,
         concurrency: concurrency.value || 4,
         image_size: apiImageSize.value || 1024
@@ -340,10 +390,16 @@ function callOnlineBatch(files, commonParams) {
     }
     const cfg = configs[0]
     return window.api.callPython('/caption-batch', {
-      files, model: cfg.model, api_key: cfg.apiKey,
-      system_prompt: sp, user_prompt: up,
-      temperature: temp, top_p: tp, max_tokens: mt,
-      base_url: cfg.endpoint, disable_think: disableThink.value || false,
+      files,
+      model: cfg.model,
+      api_key: cfg.apiKey,
+      system_prompt: sp,
+      user_prompt: up,
+      temperature: temp,
+      top_p: tp,
+      max_tokens: mt,
+      base_url: cfg.endpoint,
+      disable_think: disableThink.value || false,
       concurrency: concurrency.value || 4,
       image_size: apiImageSize.value || 1024
     })
@@ -351,10 +407,16 @@ function callOnlineBatch(files, commonParams) {
   const cfg = selectedConfig.value
   if (!cfg) throw new Error('请先在设置页面添加并启用 API 配置')
   return window.api.callPython('/caption-batch', {
-    files, model: cfg.model, api_key: cfg.apiKey,
-    system_prompt: sp, user_prompt: up,
-    temperature: temp, top_p: tp, max_tokens: mt,
-    base_url: cfg.endpoint, disable_think: disableThink.value || false,
+    files,
+    model: cfg.model,
+    api_key: cfg.apiKey,
+    system_prompt: sp,
+    user_prompt: up,
+    temperature: temp,
+    top_p: tp,
+    max_tokens: mt,
+    base_url: cfg.endpoint,
+    disable_think: disableThink.value || false,
     concurrency: concurrency.value || 4,
     image_size: apiImageSize.value || 1024
   })
@@ -386,7 +448,9 @@ async function saveAllCaptions() {
     if (captionsMap.value[path] !== undefined) toSave[path] = captionsMap.value[path]
   }
   if (Object.keys(toSave).length === 0) {
-    for (const [path, text] of Object.entries(captionsMap.value)) { if (text) toSave[path] = text }
+    for (const [path, text] of Object.entries(captionsMap.value)) {
+      if (text) toSave[path] = text
+    }
   }
   if (Object.keys(toSave).length === 0) return
   processingAction.value = 'save'
@@ -403,7 +467,10 @@ function openEditor(img) {
   editingImage.value = img
   editingCaption.value = captionsMap.value[img.path] || ''
 }
-function closeEditor() { editingImage.value = null; editingCaption.value = '' }
+function closeEditor() {
+  editingImage.value = null
+  editingCaption.value = ''
+}
 
 function syncEditToMap() {
   if (!editingImage.value) return
@@ -416,9 +483,15 @@ async function saveCurrentCaption() {
   if (!editingImage.value) return
   syncEditToMap()
   const path = editingImage.value.path
-  const result = await window.api.saveImageTags(path, editingCaption.value, outputFolder.value || undefined)
+  const result = await window.api.saveImageTags(
+    path,
+    editingCaption.value,
+    outputFolder.value || undefined
+  )
   if (result.success) {
-    const s = new Set(dirtySet.value); s.delete(path); dirtySet.value = s
+    const s = new Set(dirtySet.value)
+    s.delete(path)
+    dirtySet.value = s
   }
 }
 
@@ -459,22 +532,34 @@ const showSettings = ref(true)
           v-model="inputFolder"
           label="输入"
           placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
-          @commit="path => path && loadInputFolder(path)"
+          @commit="(path) => path && loadInputFolder(path)"
           @browse="chooseInputFolder"
         />
         <FolderRow
           v-model="outputFolder"
           label="输出"
           :placeholder="inputFolder ? '描述保存在图片同目录' : '输入文件夹路径...'"
-          @commit="path => { outputFolder = path }"
+          @commit="
+            (path) => {
+              outputFolder = path
+            }
+          "
           @browse="chooseOutputFolder"
         />
       </div>
       <div class="action-section">
-        <button class="action-btn" :disabled="imageCount === 0 || !canGenerate || !!processingAction" @click="captionBatch">
+        <button
+          class="action-btn"
+          :disabled="imageCount === 0 || !canGenerate || !!processingAction"
+          @click="captionBatch"
+        >
           批量生成
         </button>
-        <button class="action-btn" :disabled="imageCount === 0 || !!processingAction" @click="saveAllCaptions">
+        <button
+          class="action-btn"
+          :disabled="imageCount === 0 || !!processingAction"
+          @click="saveAllCaptions"
+        >
           保存全部{{ dirtyCount > 0 ? ` (${dirtyCount})` : '' }}
         </button>
       </div>
@@ -514,19 +599,30 @@ const showSettings = ref(true)
 
     <!-- ========== 主内容三栏布局 ========== -->
     <div v-if="imageCount > 0" class="caption-body">
-
       <!-- ===== 左侧：设置面板 ===== -->
       <div v-if="showSettings" class="settings-panel">
         <!-- 模式切换 Tab -->
         <div class="sp-mode-tabs">
-          <button :class="['sp-mode-tab', { active: captionMode === 'local' }]" @click="captionMode = 'local'">Local</button>
-          <button :class="['sp-mode-tab', { active: captionMode === 'online' }]" @click="captionMode = 'online'">API</button>
+          <button
+            :class="['sp-mode-tab', { active: captionMode === 'local' }]"
+            @click="captionMode = 'local'"
+          >
+            Local
+          </button>
+          <button
+            :class="['sp-mode-tab', { active: captionMode === 'online' }]"
+            @click="captionMode = 'online'"
+          >
+            API
+          </button>
         </div>
 
         <!-- Online 模式 -->
         <template v-if="captionMode === 'online'">
           <div class="sp-section">
-            <div class="sp-section-title">API 配置 <span class="sp-hint">({{ enabledConfigs.length }} 个启用)</span></div>
+            <div class="sp-section-title">
+              API 配置 <span class="sp-hint">({{ enabledConfigs.length }} 个启用)</span>
+            </div>
             <div v-if="apiConfigs.length === 0" class="sp-empty-hint">
               暂无配置，请前往设置页面添加
             </div>
@@ -534,10 +630,16 @@ const showSettings = ref(true)
               <div
                 v-for="cfg in apiConfigs"
                 :key="cfg.id"
-                :class="['sp-config-item', { active: cfg.enabled && isApiSelected(cfg), disabled: !cfg.enabled }]"
+                :class="[
+                  'sp-config-item',
+                  { active: cfg.enabled && isApiSelected(cfg), disabled: !cfg.enabled }
+                ]"
                 @click="cfg.enabled && selectApi(cfg)"
               >
-                <span :class="['toggle-switch accent', { on: cfg.enabled }]" @click.stop="toggleApiEnabled(cfg)">
+                <span
+                  :class="['toggle-switch accent', { on: cfg.enabled }]"
+                  @click.stop="toggleApiEnabled(cfg)"
+                >
                   <span class="toggle-knob"></span>
                 </span>
                 <div class="sp-config-info">
@@ -545,7 +647,18 @@ const showSettings = ref(true)
                   <span class="sp-config-model">{{ cfg.model }}</span>
                 </div>
                 <span v-if="cfg.enabled && isApiSelected(cfg)" class="sp-config-check">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
                 </span>
               </div>
             </div>
@@ -559,13 +672,27 @@ const showSettings = ref(true)
             </label>
             <div v-if="multiApiMode" class="sp-param-row">
               <span class="sp-param-label">Batch Size</span>
-              <input type="number" min="1" max="16" step="1" v-model.number="concurrency" class="sp-number-input" />
+              <input
+                v-model.number="concurrency"
+                type="number"
+                min="1"
+                max="16"
+                step="1"
+                class="sp-number-input"
+              />
             </div>
           </div>
           <div class="sp-section">
             <div class="sp-param-row">
               <span class="sp-param-label">图像尺寸</span>
-              <input type="number" min="256" max="2048" step="64" v-model.number="apiImageSize" class="sp-number-input" />
+              <input
+                v-model.number="apiImageSize"
+                type="number"
+                min="256"
+                max="2048"
+                step="64"
+                class="sp-number-input"
+              />
             </div>
           </div>
         </template>
@@ -573,12 +700,30 @@ const showSettings = ref(true)
         <!-- Local 模式 -->
         <template v-else>
           <div class="sp-section">
-            <div class="sp-section-title">模型路径 <span class="sp-hint">(HF ID 或本地路径)</span></div>
+            <div class="sp-section-title">
+              模型路径 <span class="sp-hint">(HF ID 或本地路径)</span>
+            </div>
             <div class="sp-model-path-row">
               <div class="sp-model-input-wrap">
-                <input class="sp-input" type="text" v-model="localModel" placeholder="Qwen/Qwen3.5-VL-2B" />
+                <input
+                  v-model="localModel"
+                  class="sp-input"
+                  type="text"
+                  placeholder="Qwen/Qwen3.5-VL-2B"
+                />
                 <span v-if="pathStatus === 'valid'" class="sp-path-icon valid" title="本地路径有效">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
                 </span>
                 <button
                   v-else-if="pathStatus === 'invalid'"
@@ -589,42 +734,110 @@ const showSettings = ref(true)
                   @mousedown.prevent
                   @click="clearLocalModelPath"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
                 </button>
-                <span v-else-if="pathStatus === 'hf'" class="sp-path-icon hf" title="HuggingFace 模型 ID">HF</span>
+                <span
+                  v-else-if="pathStatus === 'hf'"
+                  class="sp-path-icon hf"
+                  title="HuggingFace 模型 ID"
+                  >HF</span
+                >
                 <span v-else-if="pathStatus === 'checking'" class="sp-path-icon checking">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle></svg>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10"></circle>
+                  </svg>
                 </span>
               </div>
-              <button class="folder-browse-btn" @click="browseLocalModel" title="浏览本地模型文件夹">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+              <button
+                class="folder-browse-btn"
+                title="浏览本地模型文件夹"
+                @click="browseLocalModel"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                  ></path>
+                </svg>
               </button>
             </div>
           </div>
           <div class="sp-section">
             <div class="sp-section-title">量化</div>
             <div class="sp-radio-group">
-              <label :class="['sp-radio', { active: localQuantization === 'none' }]" @click="localQuantization = 'none'">
-                <span :class="['sp-radio-dot', { checked: localQuantization === 'none' }]"></span> 不量化
+              <label
+                :class="['sp-radio', { active: localQuantization === 'none' }]"
+                @click="localQuantization = 'none'"
+              >
+                <span :class="['sp-radio-dot', { checked: localQuantization === 'none' }]"></span>
+                不量化
               </label>
-              <label :class="['sp-radio', { active: localQuantization === '4bit' }]" @click="localQuantization = '4bit'">
-                <span :class="['sp-radio-dot', { checked: localQuantization === '4bit' }]"></span> 4bit
+              <label
+                :class="['sp-radio', { active: localQuantization === '4bit' }]"
+                @click="localQuantization = '4bit'"
+              >
+                <span :class="['sp-radio-dot', { checked: localQuantization === '4bit' }]"></span>
+                4bit
               </label>
-              <label :class="['sp-radio', { active: localQuantization === '8bit' }]" @click="localQuantization = '8bit'">
-                <span :class="['sp-radio-dot', { checked: localQuantization === '8bit' }]"></span> 8bit
+              <label
+                :class="['sp-radio', { active: localQuantization === '8bit' }]"
+                @click="localQuantization = '8bit'"
+              >
+                <span :class="['sp-radio-dot', { checked: localQuantization === '8bit' }]"></span>
+                8bit
               </label>
             </div>
           </div>
           <div class="sp-section">
             <label class="sp-toggle-row" @click="localUseSdpa = !localUseSdpa">
-              <span :class="['toggle-switch', { on: localUseSdpa }]"><span class="toggle-knob"></span></span>
-              <span class="sp-toggle-text">SDPA 注意力 <span class="sp-hint">(PyTorch 原生)</span></span>
+              <span :class="['toggle-switch', { on: localUseSdpa }]"
+                ><span class="toggle-knob"></span
+              ></span>
+              <span class="sp-toggle-text"
+                >SDPA 注意力 <span class="sp-hint">(PyTorch 原生)</span></span
+              >
             </label>
           </div>
           <div class="sp-section">
             <div class="sp-param-row">
               <span class="sp-param-label">图像尺寸</span>
-              <input type="number" min="256" max="2048" step="64" v-model.number="localImageSize" class="sp-number-input" />
+              <input
+                v-model.number="localImageSize"
+                type="number"
+                min="256"
+                max="2048"
+                step="64"
+                class="sp-number-input"
+              />
             </div>
           </div>
           <div class="sp-section">
@@ -636,15 +849,18 @@ const showSettings = ref(true)
               >
                 {{ localModelLoading ? '加载中...' : localModelLoaded ? '重新加载' : '加载模型' }}
               </button>
-              <button
-                v-if="localModelLoaded"
-                class="sp-unload-btn"
-                @click="unloadLocalModel"
-              >卸载</button>
+              <button v-if="localModelLoaded" class="sp-unload-btn" @click="unloadLocalModel">
+                卸载
+              </button>
             </div>
             <div v-if="localModelLoaded && localModelInfo" class="sp-model-status">
               <span class="sp-status-dot on"></span>
-              已加载 <span class="sp-hint">({{ localModelInfo.load_time }}s{{ localModelInfo.quantization !== 'none' ? ', ' + localModelInfo.quantization : '' }})</span>
+              已加载
+              <span class="sp-hint"
+                >({{ localModelInfo.load_time }}s{{
+                  localModelInfo.quantization !== 'none' ? ', ' + localModelInfo.quantization : ''
+                }})</span
+              >
             </div>
           </div>
         </template>
@@ -653,42 +869,74 @@ const showSettings = ref(true)
           <div class="sp-section-title">生成参数</div>
           <div class="sp-param-row">
             <span class="sp-param-label">Temperature</span>
-            <input type="range" min="0" max="2" step="0.1" v-model.number="temperature" class="sp-range" />
+            <input
+              v-model.number="temperature"
+              type="range"
+              min="0"
+              max="2"
+              step="0.1"
+              class="sp-range"
+            />
             <span class="sp-param-value">{{ temperature.toFixed(1) }}</span>
           </div>
           <div class="sp-param-row">
             <span class="sp-param-label">Top P</span>
-            <input type="range" min="0" max="1" step="0.05" v-model.number="topP" class="sp-range" />
+            <input
+              v-model.number="topP"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              class="sp-range"
+            />
             <span class="sp-param-value">{{ topP.toFixed(2) }}</span>
           </div>
           <div class="sp-param-row">
             <span class="sp-param-label">Max Tokens</span>
-            <input type="number" min="64" max="8192" step="64" v-model.number="maxTokens" class="sp-number-input" />
+            <input
+              v-model.number="maxTokens"
+              type="number"
+              min="64"
+              max="8192"
+              step="64"
+              class="sp-number-input"
+            />
           </div>
         </div>
 
         <div class="sp-section">
           <label class="sp-toggle-row" @click="skipExisting = !skipExisting">
-            <span :class="['toggle-switch', { on: skipExisting }]"><span class="toggle-knob"></span></span>
+            <span :class="['toggle-switch', { on: skipExisting }]"
+              ><span class="toggle-knob"></span
+            ></span>
             <span class="sp-toggle-text">跳过已有描述</span>
           </label>
         </div>
 
         <div class="sp-section">
           <label class="sp-toggle-row" @click="disableThink = !disableThink">
-            <span :class="['toggle-switch', { on: disableThink }]"><span class="toggle-knob"></span></span>
-            <span class="sp-toggle-text">去除思考标签 <span class="sp-hint">(&lt;think&gt;...&lt;/think&gt;)</span></span>
+            <span :class="['toggle-switch', { on: disableThink }]"
+              ><span class="toggle-knob"></span
+            ></span>
+            <span class="sp-toggle-text"
+              >去除思考标签 <span class="sp-hint">(&lt;think&gt;...&lt;/think&gt;)</span></span
+            >
           </label>
         </div>
 
         <div class="sp-section">
           <div class="sp-section-title">System Prompt</div>
-          <textarea class="sp-textarea" v-model="systemPrompt" rows="3" spellcheck="false"></textarea>
+          <textarea
+            v-model="systemPrompt"
+            class="sp-textarea"
+            rows="3"
+            spellcheck="false"
+          ></textarea>
         </div>
 
         <div class="sp-section">
           <div class="sp-section-title">User Prompt</div>
-          <textarea class="sp-textarea" v-model="userPrompt" rows="2" spellcheck="false"></textarea>
+          <textarea v-model="userPrompt" class="sp-textarea" rows="2" spellcheck="false"></textarea>
         </div>
       </div>
 
@@ -698,15 +946,28 @@ const showSettings = ref(true)
           v-for="img in images"
           :key="img.path"
           :data-path="img.path"
-          :class="['image-card', { selected: isSelected(img), editing: editingImage?.path === img.path }]"
+          :class="[
+            'image-card',
+            { selected: isSelected(img), editing: editingImage?.path === img.path }
+          ]"
           @click="openEditor(img)"
         >
-          <img v-if="thumbnails[img.path]" :src="thumbnails[img.path]" :alt="img.name" draggable="false" />
+          <img
+            v-if="thumbnails[img.path]"
+            :src="thumbnails[img.path]"
+            :alt="img.name"
+            draggable="false"
+          />
           <div v-else class="image-placeholder"></div>
           <div class="image-name-overlay">{{ img.name }}</div>
-          <span v-if="getCaptionPreview(img.path)" class="caption-badge">{{ getCaptionPreview(img.path) }}</span>
+          <span v-if="getCaptionPreview(img.path)" class="caption-badge">{{
+            getCaptionPreview(img.path)
+          }}</span>
           <span v-if="dirtySet.has(img.path)" class="dirty-dot" title="未保存"></span>
-          <span :class="['checkbox', { checked: isSelected(img) }]" @click.stop="toggleSelect(img)"></span>
+          <span
+            :class="['checkbox', { checked: isSelected(img) }]"
+            @click.stop="toggleSelect(img)"
+          ></span>
         </div>
       </div>
 
@@ -716,9 +977,25 @@ const showSettings = ref(true)
           <div class="editor-header">
             <span class="editor-filename">{{ editingImage.name }}</span>
             <div class="editor-nav">
-              <IconButton :icon="ChevronLeft" variant="editor" title="上一张" @click="navEditor(-1)" />
-              <IconButton :icon="ChevronRight" variant="editor" title="下一张" @click="navEditor(1)" />
-              <IconButton :icon="X" variant="editor" tone="close" title="关闭" @click="closeEditor" />
+              <IconButton
+                :icon="ChevronLeft"
+                variant="editor"
+                title="上一张"
+                @click="navEditor(-1)"
+              />
+              <IconButton
+                :icon="ChevronRight"
+                variant="editor"
+                title="下一张"
+                @click="navEditor(1)"
+              />
+              <IconButton
+                :icon="X"
+                variant="editor"
+                tone="close"
+                title="关闭"
+                @click="closeEditor"
+              />
             </div>
           </div>
           <div class="editor-preview">
@@ -739,8 +1016,8 @@ const showSettings = ref(true)
           <!-- 描述文本编辑 -->
           <div class="editor-caption-section">
             <textarea
-              class="editor-textarea"
               v-model="editingCaption"
+              class="editor-textarea"
               placeholder="图片描述将显示在这里..."
               rows="8"
               spellcheck="false"
@@ -765,8 +1042,17 @@ const showSettings = ref(true)
 
 <style scoped>
 /* ===== 三栏布局 ===== */
-.caption-body { flex: 1; min-height: 0; display: flex; gap: 0; overflow: hidden; }
-.caption-grid { flex: 1; min-width: 0; }
+.caption-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0;
+  overflow: hidden;
+}
+.caption-grid {
+  flex: 1;
+  min-width: 0;
+}
 
 /* ===== 左侧面板 API 配置列表 ===== */
 .sp-empty-hint {
@@ -789,15 +1075,28 @@ const showSettings = ref(true)
   border-radius: var(--radius-sm);
   font-size: 12px;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
   user-select: none;
 }
-.sp-config-item:hover { border: var(--color-border); background: var(--color-surface-soft); }
-.sp-config-item.active { border-color: var(--color-accent); background: var(--color-accent-light); }
-.sp-config-item.disabled { opacity: 0.45; cursor: default; }
+.sp-config-item:hover {
+  border: var(--color-border);
+  background: var(--color-surface-soft);
+}
+.sp-config-item.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+.sp-config-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 
 /* accent 颜色变体 toggle */
-.toggle-switch.accent.on { background: var(--color-accent); }
+.toggle-switch.accent.on {
+  background: var(--color-accent);
+}
 
 .sp-config-info {
   flex: 1;
@@ -818,7 +1117,7 @@ const showSettings = ref(true)
   color: var(--color-text-secondary);
   background: var(--color-surface-hover);
   padding: 1px 6px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   font-family: monospace;
 }
 .sp-config-check {
@@ -854,7 +1153,7 @@ const showSettings = ref(true)
   padding: 3px 6px;
   font-size: 10px;
   color: #fff;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0, 0, 0, 0.6);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -895,8 +1194,12 @@ const showSettings = ref(true)
   position: relative;
   transition: color 0.15s;
 }
-.sp-mode-tab:hover { color: var(--color-text-secondary); }
-.sp-mode-tab.active { color: var(--color-text); }
+.sp-mode-tab:hover {
+  color: var(--color-text-secondary);
+}
+.sp-mode-tab.active {
+  color: var(--color-text);
+}
 .sp-mode-tab.active::after {
   content: '';
   position: absolute;
@@ -905,7 +1208,7 @@ const showSettings = ref(true)
   right: 20%;
   height: 2px;
   background: var(--color-active-bg);
-  border-radius: 1px;
+  border-radius: var(--radius-sm);
 }
 
 .sp-section {
@@ -927,7 +1230,11 @@ const showSettings = ref(true)
 }
 
 /* Provider 单选 */
-.sp-radio-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.sp-radio-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .sp-radio {
   display: flex;
   align-items: center;
@@ -939,11 +1246,18 @@ const showSettings = ref(true)
   color: var(--color-text);
   cursor: pointer;
   user-select: none;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
   background: var(--color-input-bg);
 }
-.sp-radio:hover { border: var(--color-text-muted); }
-.sp-radio.active { border-color: var(--color-text); background: var(--color-surface-hover); }
+.sp-radio:hover {
+  border: var(--color-text-muted);
+}
+.sp-radio.active {
+  border-color: var(--color-text);
+  background: var(--color-surface-hover);
+}
 .sp-radio-dot {
   width: 14px;
   height: 14px;
@@ -973,14 +1287,16 @@ const showSettings = ref(true)
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--color-border);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--color-text);
   outline: none;
   background: var(--color-input-bg);
   box-sizing: border-box;
 }
-.sp-input:focus { border-color: var(--color-text); }
+.sp-input:focus {
+  border-color: var(--color-text);
+}
 .sp-select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
@@ -1021,17 +1337,24 @@ const showSettings = ref(true)
   height: 28px;
   padding: 0 8px;
   border: 1px solid var(--color-border);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--color-text);
   outline: none;
   box-sizing: border-box;
 }
-.sp-number-input:focus { border-color: var(--color-text); }
+.sp-number-input:focus {
+  border-color: var(--color-text);
+}
 
 /* Toggle */
-.sp-toggle-text { font-size: 12px; color: var(--color-text-secondary); }
-.sp-toggle-row:hover .sp-toggle-text { color: var(--color-text); }
+.sp-toggle-text {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.sp-toggle-row:hover .sp-toggle-text {
+  color: var(--color-text);
+}
 
 /* Textarea */
 .sp-textarea {
@@ -1040,7 +1363,7 @@ const showSettings = ref(true)
   min-height: 50px;
   padding: 8px;
   border: 1px solid var(--color-border);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   line-height: 1.6;
   color: var(--color-text);
@@ -1049,7 +1372,9 @@ const showSettings = ref(true)
   font-family: inherit;
   box-sizing: border-box;
 }
-.sp-textarea:focus { border-color: var(--color-text); }
+.sp-textarea:focus {
+  border-color: var(--color-text);
+}
 
 /* ============================================
    右侧编辑面板（仅保留 Caption 特有样式）
@@ -1081,8 +1406,13 @@ const showSettings = ref(true)
   cursor: pointer;
   transition: background 0.15s;
 }
-.generate-btn:hover:not(:disabled) { background: var(--color-text-secondary); }
-.generate-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.generate-btn:hover:not(:disabled) {
+  background: var(--color-text-secondary);
+}
+.generate-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 /* 描述文本区 */
 .editor-caption-section {
@@ -1124,19 +1454,25 @@ const showSettings = ref(true)
   border: none;
   padding: 0;
 }
-.sp-path-icon.valid { color: var(--color-success); }
-.sp-path-icon.invalid { color: var(--color-error); }
+.sp-path-icon.valid {
+  color: var(--color-success);
+}
+.sp-path-icon.invalid {
+  color: var(--color-error);
+}
 .sp-path-icon.clickable {
   pointer-events: auto;
   appearance: none;
   cursor: pointer;
   width: 18px;
   height: 18px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   transition: background 0.15s;
   z-index: 1;
 }
-.sp-path-icon.clickable:hover { background: var(--color-error-light); }
+.sp-path-icon.clickable:hover {
+  background: var(--color-error-light);
+}
 .sp-path-icon.clickable:focus-visible {
   outline: 1px solid var(--color-error);
   outline-offset: 1px;
@@ -1151,7 +1487,11 @@ const showSettings = ref(true)
   color: var(--color-text-muted);
   animation: spin-check 0.8s linear infinite;
 }
-@keyframes spin-check { to { transform: translateY(-50%) rotate(360deg); } }
+@keyframes spin-check {
+  to {
+    transform: translateY(-50%) rotate(360deg);
+  }
+}
 
 .sp-model-actions {
   display: flex;
@@ -1168,8 +1508,13 @@ const showSettings = ref(true)
   cursor: pointer;
   transition: background 0.15s;
 }
-.sp-load-btn:hover:not(:disabled) { background: var(--color-text-secondary); }
-.sp-load-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.sp-load-btn:hover:not(:disabled) {
+  background: var(--color-text-secondary);
+}
+.sp-load-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .sp-unload-btn {
   width: 52px;
   height: 30px;
@@ -1179,9 +1524,14 @@ const showSettings = ref(true)
   color: var(--color-text-secondary);
   font-size: 12px;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
 }
-.sp-unload-btn:hover { border-color: var(--color-error); color: var(--color-error); }
+.sp-unload-btn:hover {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
 .sp-model-status {
   display: flex;
   align-items: center;
@@ -1197,5 +1547,7 @@ const showSettings = ref(true)
   background: var(--color-border);
   flex-shrink: 0;
 }
-.sp-status-dot.on { background: var(--color-success); }
+.sp-status-dot.on {
+  background: var(--color-success);
+}
 </style>

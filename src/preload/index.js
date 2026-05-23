@@ -15,26 +15,36 @@ const api = {
   saveApiConfigs: (configs) => ipcRenderer.invoke('save-api-configs', configs),
   migrateApiConfigs: (configs) => ipcRenderer.invoke('migrate-api-configs', configs),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
-  selectFile: (options) => ipcRenderer.invoke('select-file', options),
   saveTextFile: (options) => ipcRenderer.invoke('save-text-file', options),
   resolveOutputDir: (inputDir) => ipcRenderer.invoke('resolve-output-dir', inputDir),
   readImages: (folderPath) => ipcRenderer.invoke('read-images', folderPath),
   readImagesRecursive: (folderPath) => ipcRenderer.invoke('read-images-recursive', folderPath),
   analyzeTrainingBuckets: (options) => ipcRenderer.invoke('analyze-training-buckets', options),
-  createWorkflowRunDir: (baseDir, name) => ipcRenderer.invoke('create-workflow-run-dir', baseDir, name),
-  copyWorkflowFiles: (files, outputDir) => ipcRenderer.invoke('copy-workflow-files', files, outputDir),
+  createWorkflowRunDir: (baseDir, name) =>
+    ipcRenderer.invoke('create-workflow-run-dir', baseDir, name),
+  copyWorkflowFiles: (files, outputDir) =>
+    ipcRenderer.invoke('copy-workflow-files', files, outputDir),
   generateThumbnail: (filePath) => ipcRenderer.invoke('generate-thumbnail', filePath),
   deleteImage: (filePath) => ipcRenderer.invoke('delete-image', filePath),
   scanImageSources: (body) => ipcRenderer.invoke('scan-image-sources', body),
   loadGrabPreview: (body) => ipcRenderer.invoke('load-grab-preview', body),
   downloadGrabImages: (body) => ipcRenderer.invoke('download-grab-images', body),
+  getTunnelStatus: () => ipcRenderer.invoke('tunnel-status'),
+  startTunnel: (config) => ipcRenderer.invoke('tunnel-start', config),
+  stopTunnel: () => ipcRenderer.invoke('tunnel-stop'),
+  onTunnelEvent: (callback) => {
+    const handler = (_event, data) => callback(data)
+    ipcRenderer.on('tunnel-event', handler)
+    return () => ipcRenderer.removeListener('tunnel-event', handler)
+  },
   // --- Python 后端通用代理 ---
   callPython: (endpoint, body) => ipcRenderer.invoke('call-python', endpoint, body),
   abortTask: () => ipcRenderer.invoke('abort-task'),
   // --- Node.js 本地文件操作 ---
   checkPathExists: (targetPath) => ipcRenderer.invoke('check-path-exists', targetPath),
   batchReadTags: (imagePaths) => ipcRenderer.invoke('batch-read-tags', imagePaths),
-  saveImageTags: (imagePath, tags, outputDir) => ipcRenderer.invoke('save-image-tags', imagePath, tags, outputDir),
+  saveImageTags: (imagePath, tags, outputDir) =>
+    ipcRenderer.invoke('save-image-tags', imagePath, tags, outputDir),
   batchSaveTags: (tagsMap, outputDir) => ipcRenderer.invoke('batch-save-tags', tagsMap, outputDir),
   onTaskProgress: (callback) => {
     const handler = (_event, data) => callback(data)

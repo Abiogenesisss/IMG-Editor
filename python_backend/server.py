@@ -7,6 +7,7 @@ import os
 import json
 import socket
 import logging
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -169,6 +170,7 @@ class Handler(BaseHTTPRequestHandler):
             "/set-gpu-config": self._set_gpu_config,
             "/grab-download": self._grab_download,
             "/cancel": self._cancel,
+            "/shutdown": self._shutdown,
         }
         handler = routes.get(self.path)
         if handler:
@@ -848,6 +850,12 @@ class Handler(BaseHTTPRequestHandler):
     def _cancel(self):
         _cancel_event.set()
         self._json({"success": True})
+
+    def _shutdown(self):
+        _cancel_event.set()
+        shutdown_pool()
+        self._json({"success": True})
+        threading.Thread(target=self.server.shutdown, daemon=True).start()
 
     # ---- 清理模型缓存 ----
     def _cleanup_caches(self):

@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
+import { useGridObserver } from '../composables/useGridObserver'
 import FolderRow from '../components/FolderRow.vue'
 import IconButton from '../components/IconButton.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
@@ -38,9 +39,7 @@ const {
   observeGrid
 } = useImageBrowser()
 
-const gridRef = ref(null)
-onMounted(() => { if (gridRef.value) observeGrid(gridRef.value) })
-watch(() => images.value, () => { if (gridRef.value) observeGrid(gridRef.value) }, { flush: 'post' })
+const gridRef = useGridObserver(images, observeGrid)
 
 // --- 面板控制 ---
 const activePanel = ref(null)
@@ -60,7 +59,7 @@ function closePanel() {
 const modelOptions = [
   { value: 'real-cugan', label: 'Real-CUGAN' },
   { value: 'real-esrgan', label: 'Real-ESRGAN' },
-  { value: 'waifu2x', label: 'Waifu2x' },
+  { value: 'waifu2x', label: 'Waifu2x' }
 ]
 
 const model = ref('real-cugan')
@@ -69,7 +68,7 @@ const model = ref('real-cugan')
 const w2xStyleOptions = [
   { value: 'art', label: 'Art' },
   { value: 'art_scan', label: 'Art Scan' },
-  { value: 'photo', label: 'Photo' },
+  { value: 'photo', label: 'Photo' }
 ]
 const w2xStyle = ref('art')
 const tta = ref(false)
@@ -107,7 +106,7 @@ const modelConfigs = {
     defaultScale: 4,
     defaultDenoise: 'none'
   },
-  'waifu2x': {
+  waifu2x: {
     scales: [
       { value: 1, label: '1X' },
       { value: 2, label: '2X' },
@@ -156,7 +155,7 @@ watch(model, (val) => {
 
 // 切换倍率时，自动修正降噪选项
 watch(scale, () => {
-  const valid = denoiseOptions.value.map(o => o.value)
+  const valid = denoiseOptions.value.map((o) => o.value)
   if (!valid.includes(denoise.value)) {
     const config = currentConfig.value
     denoise.value = config?.defaultDenoise || valid[0] || 'none'
@@ -170,7 +169,7 @@ const previewModes = [
 ]
 
 const denoiseLabel = computed(() => {
-  const opt = denoiseOptions.value.find(o => o.value === denoise.value)
+  const opt = denoiseOptions.value.find((o) => o.value === denoise.value)
   return opt ? opt.label : ''
 })
 
@@ -190,8 +189,12 @@ async function doUpscalePreview() {
   upscalePreviewLoading.value = true
   try {
     const result = await window.api.callPython('/preview-upscale', {
-      file: file, scale: scale.value, denoise: denoise.value,
-      model: model.value, style: w2xStyle.value, tta: tta.value
+      file: file,
+      scale: scale.value,
+      denoise: denoise.value,
+      model: model.value,
+      style: w2xStyle.value,
+      tta: tta.value
     })
     if (result.ok) {
       upscalePreviewData.value = result
@@ -250,10 +253,16 @@ async function runUpscale() {
   const outDir = await getOutputDir()
   processingAction.value = 'upscale'
   try {
-    const files = selectedCount.value > 0 ? [...selectedImages.value] : images.value.map(i => i.path)
+    const files =
+      selectedCount.value > 0 ? [...selectedImages.value] : images.value.map((i) => i.path)
     const result = await window.api.callPython('/upscale', {
-      files: files, output_dir: outDir, scale: scale.value, denoise: denoise.value,
-      model: model.value || 'real-cugan', style: w2xStyle.value || 'art', tta: tta.value || false
+      files: files,
+      output_dir: outDir,
+      scale: scale.value,
+      denoise: denoise.value,
+      model: model.value || 'real-cugan',
+      style: w2xStyle.value || 'art',
+      tta: tta.value || false
     })
     if (result.aborted) return
   } finally {
@@ -262,7 +271,9 @@ async function runUpscale() {
 }
 
 const canRun = computed(() => imageCount.value > 0 && !processingAction.value)
-const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoading.value && !processingAction.value)
+const canPreview = computed(
+  () => selectedCount.value > 0 && !upscalePreviewLoading.value && !processingAction.value
+)
 </script>
 
 <template>
@@ -277,14 +288,18 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
           v-model="inputFolder"
           label="输入"
           placeholder="输入路径后按回车加载文件夹内的图片，或点击 ... 选择文件夹"
-          @commit="path => path && loadInputFolder(path)"
+          @commit="(path) => path && loadInputFolder(path)"
           @browse="chooseInputFolder"
         />
         <FolderRow
           v-model="outputFolder"
           label="输出"
           :placeholder="inputFolder ? '同级自动创建输出目录' : '输入文件夹路径...'"
-          @commit="path => { outputFolder = path }"
+          @commit="
+            (path) => {
+              outputFolder = path
+            }
+          "
           @browse="chooseOutputFolder"
         />
       </div>
@@ -297,7 +312,11 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
           >
             参数设置
           </button>
-          <div v-if="activePanel === 'params'" class="action-panel upscale-panel" @click="denoiseDropOpen = false">
+          <div
+            v-if="activePanel === 'params'"
+            class="action-panel upscale-panel"
+            @click="denoiseDropOpen = false"
+          >
             <!-- 模型选择 -->
             <div class="panel-section">
               <span class="panel-label">超分模型</span>
@@ -331,7 +350,18 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
               <span class="panel-label">降噪配置</span>
               <div class="custom-select" @click.stop="denoiseDropOpen = !denoiseDropOpen">
                 <span class="custom-select-value">{{ denoiseLabel }}</span>
-                <svg class="custom-select-arrow" :class="{ open: denoiseDropOpen }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <svg
+                  class="custom-select-arrow"
+                  :class="{ open: denoiseDropOpen }"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
                   <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
                 <Transition name="dropdown">
@@ -366,16 +396,10 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
               <div class="panel-section">
                 <span class="panel-label">TTA 增强</span>
                 <div class="panel-row format-options">
-                  <label
-                    :class="['format-tag', { selected: !tta }]"
-                    @click="tta = false"
-                  >
+                  <label :class="['format-tag', { selected: !tta }]" @click="tta = false">
                     关闭
                   </label>
-                  <label
-                    :class="['format-tag', { selected: tta }]"
-                    @click="tta = true"
-                  >
+                  <label :class="['format-tag', { selected: tta }]" @click="tta = true">
                     开启
                   </label>
                 </div>
@@ -384,19 +408,11 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
           </div>
         </div>
         <!-- 预览按钮 -->
-        <button
-          class="action-btn"
-          :disabled="!canPreview"
-          @click="doUpscalePreview"
-        >
+        <button class="action-btn" :disabled="!canPreview" @click="doUpscalePreview">
           {{ upscalePreviewLoading ? '处理中...' : '预览' }}
         </button>
         <!-- 执行按钮 -->
-        <button
-          class="action-btn upscale-run-btn"
-          :disabled="!canRun"
-          @click="runUpscale"
-        >
+        <button class="action-btn upscale-run-btn" :disabled="!canRun" @click="runUpscale">
           {{ processingAction === 'upscale' ? '处理中...' : '执行超分' }}
         </button>
       </div>
@@ -474,8 +490,11 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
     <!-- 超分预览遮罩 -->
     <Teleport to="body">
       <Transition name="preview-fade">
-        <div v-if="upscalePreviewData" class="preview-overlay upscale-preview-overlay" @click.self="closeUpscalePreview">
-
+        <div
+          v-if="upscalePreviewData"
+          class="preview-overlay upscale-preview-overlay"
+          @click.self="closeUpscalePreview"
+        >
           <!-- 叠图模式 (Slider) -->
           <div
             v-if="previewMode === 'slider'"
@@ -498,10 +517,26 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
             />
             <div class="slider-line" :style="{ left: sliderPos + '%' }">
               <div class="slider-handle">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#fff"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                >
                   <polyline points="15 18 9 12 15 6"></polyline>
                 </svg>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#fff"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                >
                   <polyline points="9 18 15 12 9 6"></polyline>
                 </svg>
               </div>
@@ -632,7 +667,7 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   right: 0;
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   z-index: 20;
   overflow: hidden;
@@ -643,7 +678,9 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   font-size: 12px;
   color: #374151;
   cursor: pointer;
-  transition: background 0.1s, color 0.1s;
+  transition:
+    background 0.1s,
+    color 0.1s;
 }
 
 .custom-select-item:hover {
@@ -658,7 +695,9 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
 /* 下拉框动画 */
 .dropdown-enter-active,
 .dropdown-leave-active {
-  transition: opacity 0.15s, transform 0.15s;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
   transform-origin: top center;
 }
 
@@ -673,7 +712,9 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   background: #1b1b1f;
   color: #fff;
   border-color: #1b1b1f;
-  transition: background 0.15s, opacity 0.15s;
+  transition:
+    background 0.15s,
+    opacity 0.15s;
 }
 
 .upscale-run-btn:hover:not(:disabled) {
@@ -687,18 +728,20 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
 
 /* ===== 预览模式栏（工具栏下方独立行） ===== */
 .preview-mode-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
-  min-height: 36px;
+  height: 40px;
+  padding: 6px 0 8px;
   box-sizing: border-box;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: none;
   flex-shrink: 0;
 }
 
 .preview-mode-label {
   font-size: 12px;
+  line-height: 16px;
   color: var(--color-text-secondary);
   white-space: nowrap;
 }
@@ -708,10 +751,14 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   font-size: 12px;
+  line-height: 16px;
   color: var(--color-text-secondary);
   cursor: pointer;
   user-select: none;
-  transition: color 0.12s, background 0.12s, border-color 0.12s;
+  transition:
+    color 0.12s,
+    background 0.12s,
+    border-color 0.12s;
   background: var(--color-surface);
 }
 
@@ -735,7 +782,7 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   gap: 4px;
   background: rgba(0, 0, 0, 0.6);
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   z-index: 10;
 }
 
@@ -772,7 +819,7 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   max-height: 80vh;
   cursor: ew-resize;
   user-select: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -826,7 +873,7 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
   font-size: 12px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   pointer-events: none;
   z-index: 3;
 }
@@ -859,7 +906,7 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   max-width: 44vw;
   max-height: 80vh;
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .compare-side-item .compare-label {
@@ -889,7 +936,7 @@ const canPreview = computed(() => selectedCount.value > 0 && !upscalePreviewLoad
   max-width: 85vw;
   max-height: 40vh;
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .compare-stack-item .compare-label {

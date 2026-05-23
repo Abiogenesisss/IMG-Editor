@@ -16,6 +16,7 @@ import {
   Trash2
 } from 'lucide-vue-next'
 import WorkflowNode from '../components/WorkflowNode.vue'
+import { loadApiConfigs } from '../services/apiConfigs'
 
 defineOptions({ name: 'WorkflowCanvas' })
 
@@ -33,9 +34,20 @@ const NODE_DEFS = {
     inputs: [],
     outputs: FILE_OUT,
     required: ['sources'],
-    params: { sources: '', include_srcset: true, file_types: 'jpg,png,webp,gif', max_per_source: 120 },
+    params: {
+      sources: '',
+      include_srcset: true,
+      file_types: 'jpg,png,webp,gif',
+      max_per_source: 120
+    },
     fields: [
-      { key: 'sources', label: 'URL 列表', type: 'textarea', rows: 4, placeholder: '每行一个页面或图片 URL' },
+      {
+        key: 'sources',
+        label: 'URL 列表',
+        type: 'textarea',
+        rows: 4,
+        placeholder: '每行一个页面或图片 URL'
+      },
       { key: 'file_types', label: '文件类型', type: 'text', placeholder: 'jpg,png,webp,gif' },
       { key: 'max_per_source', label: '每源上限', type: 'number', min: 1, max: 500 },
       { key: 'include_srcset', label: 'Srcset', type: 'checkbox', hint: '读取 srcset 候选' }
@@ -167,7 +179,13 @@ const NODE_DEFS = {
     category: '处理节点',
     inputs: FILE_IN,
     outputs: FILE_OUT,
-    params: { min_width: 0, min_height: 0, max_width: 0, max_height: 0, move_rejected_to_del: true },
+    params: {
+      min_width: 0,
+      min_height: 0,
+      max_width: 0,
+      max_height: 0,
+      move_rejected_to_del: true
+    },
     fields: [
       { key: 'min_width', label: '最小宽度', type: 'number', min: 0 },
       { key: 'min_height', label: '最小高度', type: 'number', min: 0 },
@@ -349,7 +367,12 @@ const NODE_DEFS = {
       keep_quality: false
     },
     fields: [
-      { key: 'model_key', label: '模型 Key', type: 'text', placeholder: '留空使用第一个已下载模型' },
+      {
+        key: 'model_key',
+        label: '模型 Key',
+        type: 'text',
+        placeholder: '留空使用第一个已下载模型'
+      },
       { key: 'general_threshold', label: '通用阈值', type: 'number', min: 0, max: 1, step: 0.01 },
       { key: 'character_threshold', label: '角色阈值', type: 'number', min: 0, max: 1, step: 0.01 },
       { key: 'keep_copyright', label: '版权', type: 'checkbox' },
@@ -376,7 +399,12 @@ const NODE_DEFS = {
       disable_think: false
     },
     fields: [
-      { key: 'api_config', label: 'API 配置名/ID', type: 'text', placeholder: '留空使用第一个启用配置' },
+      {
+        key: 'api_config',
+        label: 'API 配置名/ID',
+        type: 'text',
+        placeholder: '留空使用第一个启用配置'
+      },
       { key: 'system_prompt', label: 'System Prompt', type: 'textarea', rows: 2 },
       { key: 'user_prompt', label: 'User Prompt', type: 'textarea', rows: 3 },
       { key: 'temperature', label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.1 },
@@ -431,7 +459,9 @@ const NODE_DEFS = {
 }
 
 const nodeTypes = { workflow: WorkflowNode }
-const { fitView, getViewport, screenToFlowCoordinate, setViewport, toObject } = useVueFlow({ id: 'workflow-canvas' })
+const { fitView, getViewport, screenToFlowCoordinate, setViewport, toObject } = useVueFlow({
+  id: 'workflow-canvas'
+})
 
 const nodes = ref([])
 const edges = ref([])
@@ -462,7 +492,8 @@ const nodeCategories = computed(() => {
 })
 
 const runStateText = computed(() => {
-  if (running.value) return currentNodeId.value ? `运行中：${nodeLabel(currentNodeId.value)}` : '运行中'
+  if (running.value)
+    return currentNodeId.value ? `运行中：${nodeLabel(currentNodeId.value)}` : '运行中'
   if (runError.value) return runError.value
   if (runRoot.value) return '运行完成'
   return '等待运行'
@@ -501,7 +532,8 @@ function createBlankTemplate(name = '未命名工作流') {
 function loadTemplates() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
-    templates.value = Array.isArray(parsed) && parsed.length ? parsed : [createBlankTemplate('默认工作流')]
+    templates.value =
+      Array.isArray(parsed) && parsed.length ? parsed : [createBlankTemplate('默认工作流')]
   } catch {
     templates.value = [createBlankTemplate('默认工作流')]
   }
@@ -515,11 +547,9 @@ function persistTemplates() {
 }
 
 function toggleNodeCollapsed(id) {
-  nodes.value = nodes.value.map((node) => (
-    node.id === id
-      ? { ...node, data: { ...node.data, collapsed: !node.data.collapsed } }
-      : node
-  ))
+  nodes.value = nodes.value.map((node) =>
+    node.id === id ? { ...node, data: { ...node.data, collapsed: !node.data.collapsed } } : node
+  )
 }
 
 function hydrateNode(node) {
@@ -573,7 +603,8 @@ function serializeEdges() {
 }
 
 async function loadActiveTemplate() {
-  const tpl = templates.value.find((item) => item.id === activeTemplateId.value) || templates.value[0]
+  const tpl =
+    templates.value.find((item) => item.id === activeTemplateId.value) || templates.value[0]
   if (!tpl) return
   activeTemplateId.value = tpl.id
   templateNameDraft.value = tpl.name
@@ -585,7 +616,11 @@ async function loadActiveTemplate() {
   }))
   await nextTick()
   if (tpl.viewport) {
-    try { setViewport(tpl.viewport) } catch { /* ignore */ }
+    try {
+      setViewport(tpl.viewport)
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -722,7 +757,13 @@ function hasPath(fromId, toId, edgeList = edges.value) {
 }
 
 function isValidConnection(connection) {
-  if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) return false
+  if (
+    !connection.source ||
+    !connection.target ||
+    !connection.sourceHandle ||
+    !connection.targetHandle
+  )
+    return false
   if (connection.source === connection.target) return false
   const sourcePort = getPort(connection.source, connection.sourceHandle, 'source')
   const targetPort = getPort(connection.target, connection.targetHandle, 'target')
@@ -809,9 +850,7 @@ function handleTaskProgress(payload = {}) {
     saved: payload.saved,
     failed: payload.failed
   }
-  const message = total > 0
-    ? `${progress.stageText} ${done}/${total}`
-    : progress.stageText
+  const message = total > 0 ? `${progress.stageText} ${done}/${total}` : progress.stageText
   patchNode(currentNodeId.value, { progress, message })
 }
 
@@ -852,14 +891,18 @@ function validateWorkflow() {
       }
     }
     for (const input of node.data.inputs || []) {
-      const hasIncoming = edges.value.some((edge) => edge.target === node.id && edge.targetHandle === input.id)
+      const hasIncoming = edges.value.some(
+        (edge) => edge.target === node.id && edge.targetHandle === input.id
+      )
       if (!input.optional && !hasIncoming) {
         throw new Error(`${node.data.label} 缺少输入：${input.label}`)
       }
     }
   }
 
-  const subEdges = edges.value.filter((edge) => involved.has(edge.source) && involved.has(edge.target))
+  const subEdges = edges.value.filter(
+    (edge) => involved.has(edge.source) && involved.has(edge.target)
+  )
   const indegree = new Map([...involved].map((id) => [id, 0]))
   for (const edge of subEdges) indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1)
 
@@ -921,21 +964,29 @@ function imagePaths(entries) {
 }
 
 function splitLines(value) {
-  return String(value || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 function splitCsv(value) {
-  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean)
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 function sanitizeSegment(value) {
   const reservedChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
-  return String(value || 'output')
-    .split('')
-    .map((char) => (reservedChars.has(char) || char.charCodeAt(0) < 32 ? '_' : char))
-    .join('')
-    .replace(/\s+/g, '_')
-    .slice(0, 80) || 'output'
+  return (
+    String(value || 'output')
+      .split('')
+      .map((char) => (reservedChars.has(char) || char.charCodeAt(0) < 32 ? '_' : char))
+      .join('')
+      .replace(/\s+/g, '_')
+      .slice(0, 80) || 'output'
+  )
 }
 
 function joinRunPath(root, name) {
@@ -1042,8 +1093,14 @@ async function runNode(node, inputMap, root) {
       if (!items.length) return { files: makeFileValue([]) }
       const download = await window.api.downloadGrabImages({ output_dir: folder, items })
       assertSuccess(download, 'URL 下载失败')
-      const files = (download.results || []).filter((item) => item.success && item.path).map((item) => item.path)
-      return { files: makeFileValue(files.length ? files : imagePaths(await window.api.readImagesRecursive(folder))) }
+      const files = (download.results || [])
+        .filter((item) => item.success && item.path)
+        .map((item) => item.path)
+      return {
+        files: makeFileValue(
+          files.length ? files : imagePaths(await window.api.readImagesRecursive(folder))
+        )
+      }
     }
     case 'source-booru':
     case 'source-pixiv':
@@ -1051,7 +1108,11 @@ async function runNode(node, inputMap, root) {
       const payload = buildGrabPayload(kind, params, folder)
       const result = await window.api.callPython('/grab-download', payload)
       assertSuccess(result, '抓取失败')
-      return { files: makeFileValue(imagePaths(await window.api.readImagesRecursive(result.output_dir || folder))) }
+      return {
+        files: makeFileValue(
+          imagePaths(await window.api.readImagesRecursive(result.output_dir || folder))
+        )
+      }
     }
     case 'filter-resolution': {
       const result = await window.api.callPython('/resolution-filter', {
@@ -1062,8 +1123,12 @@ async function runNode(node, inputMap, root) {
         max_height: params.max_height || 0
       })
       assertSuccess(result, '分辨率过滤失败')
-      const kept = (result.results || []).filter((item) => item.ok && !item.filtered).map((item) => item.file)
-      const rejected = (result.results || []).filter((item) => item.ok && item.filtered).map((item) => item.file)
+      const kept = (result.results || [])
+        .filter((item) => item.ok && !item.filtered)
+        .map((item) => item.file)
+      const rejected = (result.results || [])
+        .filter((item) => item.ok && item.filtered)
+        .map((item) => item.file)
       let deleted = { moved: 0, failed: 0 }
       if (params.move_rejected_to_del !== false) {
         deleted = await moveFilesToDel(rejected, '移入 del')
@@ -1109,31 +1174,52 @@ async function runNode(node, inputMap, root) {
     }
     case 'process-alpha':
       return {
-        files: await runTransform('/flatten-alpha', {
-          files: inputFiles,
-          output_dir: folder,
-          background: params.background || 'white'
-        }, inputFiles, folder, '透明通道处理失败', inputMetadata)
+        files: await runTransform(
+          '/flatten-alpha',
+          {
+            files: inputFiles,
+            output_dir: folder,
+            background: params.background || 'white'
+          },
+          inputFiles,
+          folder,
+          '透明通道处理失败',
+          inputMetadata
+        )
       }
     case 'process-resize':
       return {
-        files: await runTransform('/batch-resize', {
-          files: inputFiles,
-          output_dir: folder,
-          width: params.width || 1024,
-          height: params.height || 1024,
-          allow_upscale: params.allow_upscale === true,
-          face_threshold: params.face_threshold ?? 0.5
-        }, inputFiles, folder, '缩放失败', inputMetadata)
+        files: await runTransform(
+          '/batch-resize',
+          {
+            files: inputFiles,
+            output_dir: folder,
+            width: params.width || 1024,
+            height: params.height || 1024,
+            allow_upscale: params.allow_upscale === true,
+            face_threshold: params.face_threshold ?? 0.5
+          },
+          inputFiles,
+          folder,
+          '缩放失败',
+          inputMetadata
+        )
       }
     case 'process-ratio-crop':
       return {
-        files: await runTransform('/proportional-crop', {
-          files: inputFiles,
-          output_dir: folder,
-          ratio_w: params.ratio_w || 1,
-          ratio_h: params.ratio_h || 1
-        }, inputFiles, folder, '比例裁剪失败', inputMetadata)
+        files: await runTransform(
+          '/proportional-crop',
+          {
+            files: inputFiles,
+            output_dir: folder,
+            ratio_w: params.ratio_w || 1,
+            ratio_h: params.ratio_h || 1
+          },
+          inputFiles,
+          folder,
+          '比例裁剪失败',
+          inputMetadata
+        )
       }
     case 'process-three-split': {
       const result = await window.api.callPython('/three-stage-split', {
@@ -1144,60 +1230,107 @@ async function runNode(node, inputMap, root) {
         head_conf: params.head_conf ?? 0.3
       })
       assertSuccess(result, '三分法裁剪失败')
-      return { files: makeFileValue(imagePaths(await window.api.readImagesRecursive(folder)), inputMetadata) }
+      return {
+        files: makeFileValue(
+          imagePaths(await window.api.readImagesRecursive(folder)),
+          inputMetadata
+        )
+      }
     }
     case 'process-format':
       return {
-        files: await runTransform('/format-convert', {
-          files: inputFiles,
-          output_dir: folder,
-          target_format: params.target_format || 'png'
-        }, inputFiles, folder, '格式转换失败', inputMetadata)
+        files: await runTransform(
+          '/format-convert',
+          {
+            files: inputFiles,
+            output_dir: folder,
+            target_format: params.target_format || 'png'
+          },
+          inputFiles,
+          folder,
+          '格式转换失败',
+          inputMetadata
+        )
       }
     case 'process-mirror':
       return {
-        files: await runTransform('/mirror-flip', {
-          files: inputFiles,
-          output_dir: folder
-        }, inputFiles, folder, '镜像失败', inputMetadata)
+        files: await runTransform(
+          '/mirror-flip',
+          {
+            files: inputFiles,
+            output_dir: folder
+          },
+          inputFiles,
+          folder,
+          '镜像失败',
+          inputMetadata
+        )
       }
     case 'process-cutout':
       return {
-        files: await runTransform('/cutout', {
-          files: inputFiles,
-          output_dir: folder,
-          count: params.count || 1,
-          size_ratio: params.size_ratio ?? 0.15
-        }, inputFiles, folder, 'Cutout 失败', inputMetadata)
+        files: await runTransform(
+          '/cutout',
+          {
+            files: inputFiles,
+            output_dir: folder,
+            count: params.count || 1,
+            size_ratio: params.size_ratio ?? 0.15
+          },
+          inputFiles,
+          folder,
+          'Cutout 失败',
+          inputMetadata
+        )
       }
     case 'process-perspective':
       return {
-        files: await runTransform('/perspective', {
-          files: inputFiles,
-          output_dir: folder,
-          intensity: params.intensity ?? 0.1
-        }, inputFiles, folder, '透视处理失败', inputMetadata)
+        files: await runTransform(
+          '/perspective',
+          {
+            files: inputFiles,
+            output_dir: folder,
+            intensity: params.intensity ?? 0.1
+          },
+          inputFiles,
+          folder,
+          '透视处理失败',
+          inputMetadata
+        )
       }
     case 'process-blur-noise':
       return {
-        files: await runTransform('/gaussian-blur-noise', {
-          files: inputFiles,
-          output_dir: folder,
-          blur_radius: params.blur_radius ?? 2,
-          noise_sigma: params.noise_sigma ?? 15
-        }, inputFiles, folder, '模糊/噪声失败', inputMetadata)
+        files: await runTransform(
+          '/gaussian-blur-noise',
+          {
+            files: inputFiles,
+            output_dir: folder,
+            blur_radius: params.blur_radius ?? 2,
+            noise_sigma: params.noise_sigma ?? 15
+          },
+          inputFiles,
+          folder,
+          '模糊/噪声失败',
+          inputMetadata
+        )
       }
     case 'process-upscale':
       return {
-        files: await runTransform('/upscale', {
-          files: inputFiles,
-          output_dir: folder,
-          scale: params.scale || 2,
-          denoise: params.denoise || 'denoise3x',
-          model: params.model || 'real-cugan',
-          style: params.style || 'art',
-          tta: params.tta === true
-        }, inputFiles, folder, '超分失败', inputMetadata)
+        files: await runTransform(
+          '/upscale',
+          {
+            files: inputFiles,
+            output_dir: folder,
+            scale: params.scale || 2,
+            denoise: params.denoise || 'denoise3x',
+            model: params.model || 'real-cugan',
+            style: params.style || 'art',
+            tta: params.tta === true
+          },
+          inputFiles,
+          folder,
+          '超分失败',
+          inputMetadata
+        )
       }
     case 'metadata-tagger':
       return await runTaggerNode(params, inputFiles, inputMetadata)
@@ -1207,7 +1340,9 @@ async function runNode(node, inputMap, root) {
       const targetDir = resolveOutputDir(root, node)
       const result = await window.api.copyWorkflowFiles(inputFiles, targetDir)
       assertSuccess(result, '保存输出失败')
-      const copied = (result.results || []).filter((item) => item.success && item.path).map((item) => item.path)
+      const copied = (result.results || [])
+        .filter((item) => item.success && item.path)
+        .map((item) => item.path)
       return { files: makeFileValue(copied, inputMetadata) }
     }
     case 'output-cluster': {
@@ -1227,9 +1362,17 @@ async function runNode(node, inputMap, root) {
       }
       if (!Object.keys(filesByGroup).length) throw new Error('聚类没有生成有效分组')
       const targetDir = resolveOutputDir(root, node)
-      const move = await window.api.callPython('/cluster-move', { files_by_group: filesByGroup, output_dir: targetDir })
+      const move = await window.api.callPython('/cluster-move', {
+        files_by_group: filesByGroup,
+        output_dir: targetDir
+      })
       assertSuccess(move, '聚类输出失败')
-      return { files: makeFileValue(imagePaths(await window.api.readImagesRecursive(targetDir)), inputMetadata) }
+      return {
+        files: makeFileValue(
+          imagePaths(await window.api.readImagesRecursive(targetDir)),
+          inputMetadata
+        )
+      }
     }
     default:
       throw new Error(`未知节点：${kind}`)
@@ -1344,21 +1487,6 @@ async function runCaptionNode(params, files, inputMetadata) {
   }
 }
 
-async function loadApiConfigs() {
-  try {
-    const legacyRaw = localStorage.getItem('api-configs')
-    if (legacyRaw !== null) {
-      const legacy = JSON.parse(legacyRaw || '[]')
-      const result = await window.api.migrateApiConfigs(Array.isArray(legacy) ? legacy : [])
-      localStorage.removeItem('api-configs')
-      return result?.configs || []
-    }
-    return await window.api.getApiConfigs()
-  } catch {
-    return []
-  }
-}
-
 async function chooseOutputRoot() {
   const folder = await window.api.selectFolder()
   if (folder) {
@@ -1387,8 +1515,12 @@ async function runWorkflow() {
   running.value = true
   const values = new Map()
   try {
-    for (const nodeId of plan.order) patchNode(nodeId, { status: 'queued', message: '', metrics: {} })
-    const rootResult = await window.api.createWorkflowRunDir(outputRoot.value, templateNameDraft.value || 'workflow')
+    for (const nodeId of plan.order)
+      patchNode(nodeId, { status: 'queued', message: '', metrics: {} })
+    const rootResult = await window.api.createWorkflowRunDir(
+      outputRoot.value,
+      templateNameDraft.value || 'workflow'
+    )
     if (typeof rootResult !== 'string') assertSuccess(rootResult, '创建运行目录失败')
     const root = rootResult
     runRoot.value = root
@@ -1427,7 +1559,8 @@ async function runWorkflow() {
     currentNodeId.value = ''
     addLog('工作流执行完成')
   } catch (err) {
-    if (currentNodeId.value) patchNode(currentNodeId.value, { status: 'error', message: err.message || '执行失败' })
+    if (currentNodeId.value)
+      patchNode(currentNodeId.value, { status: 'error', message: err.message || '执行失败' })
     runError.value = err.message || '执行失败'
     addLog(runError.value)
   } finally {
@@ -1440,7 +1573,11 @@ async function stopRun() {
   if (!running.value) return
   abortRequested.value = true
   addLog('停止请求已发送')
-  try { await window.api.abortTask() } catch { /* ignore */ }
+  try {
+    await window.api.abortTask()
+  } catch {
+    /* ignore */
+  }
 }
 
 function resetStatus() {
@@ -1454,23 +1591,64 @@ function resetStatus() {
   <div class="workflow-page">
     <header class="workflow-toolbar" @click.stop>
       <div class="template-tools">
-        <select v-model="activeTemplateId" class="tool-select" :disabled="running" @change="loadActiveTemplate">
+        <select
+          v-model="activeTemplateId"
+          class="tool-select"
+          :disabled="running"
+          @change="loadActiveTemplate"
+        >
           <option v-for="tpl in templates" :key="tpl.id" :value="tpl.id">{{ tpl.name }}</option>
         </select>
-        <input v-model="templateNameDraft" class="tool-input name-input" type="text" spellcheck="false" :disabled="running" />
-        <button class="icon-tool" type="button" title="保存模板" :disabled="running" @click="saveTemplate(true)">
+        <input
+          v-model="templateNameDraft"
+          class="tool-input name-input"
+          type="text"
+          spellcheck="false"
+          :disabled="running"
+        />
+        <button
+          class="icon-tool"
+          type="button"
+          title="保存模板"
+          :disabled="running"
+          @click="saveTemplate(true)"
+        >
           <Save :size="15" />
         </button>
-        <button class="icon-tool" type="button" title="重命名" :disabled="running" @click="renameTemplate">
+        <button
+          class="icon-tool"
+          type="button"
+          title="重命名"
+          :disabled="running"
+          @click="renameTemplate"
+        >
           <Pencil :size="15" />
         </button>
-        <button class="icon-tool" type="button" title="新建模板" :disabled="running" @click="newTemplate">
+        <button
+          class="icon-tool"
+          type="button"
+          title="新建模板"
+          :disabled="running"
+          @click="newTemplate"
+        >
           <Plus :size="15" />
         </button>
-        <button class="icon-tool" type="button" title="复制模板" :disabled="running" @click="duplicateTemplate">
+        <button
+          class="icon-tool"
+          type="button"
+          title="复制模板"
+          :disabled="running"
+          @click="duplicateTemplate"
+        >
           <Copy :size="15" />
         </button>
-        <button class="icon-tool danger" type="button" title="删除模板" :disabled="running" @click="deleteTemplate">
+        <button
+          class="icon-tool danger"
+          type="button"
+          title="删除模板"
+          :disabled="running"
+          @click="deleteTemplate"
+        >
           <Trash2 :size="15" />
         </button>
       </div>
@@ -1486,15 +1664,34 @@ function resetStatus() {
         <button class="icon-tool" type="button" title="适配画布" @click="fitView({ padding: 0.2 })">
           <Maximize2 :size="15" />
         </button>
-        <button class="icon-tool" type="button" title="清状态" :disabled="running" @click="resetStatus">
+        <button
+          class="icon-tool"
+          type="button"
+          title="清状态"
+          :disabled="running"
+          @click="resetStatus"
+        >
           <RotateCcw :size="15" />
         </button>
       </div>
 
       <div class="output-tools">
         <span class="output-label">输出根目录</span>
-        <input v-model="outputRoot" class="tool-input output-input" type="text" placeholder="留空自动使用应用数据目录 workflow_runs" spellcheck="false" @change="persistTemplates" />
-        <button class="icon-tool" type="button" title="选择输出根目录" :disabled="running" @click="chooseOutputRoot">
+        <input
+          v-model="outputRoot"
+          class="tool-input output-input"
+          type="text"
+          placeholder="留空自动使用应用数据目录 workflow_runs"
+          spellcheck="false"
+          @change="persistTemplates"
+        />
+        <button
+          class="icon-tool"
+          type="button"
+          title="选择输出根目录"
+          :disabled="running"
+          @click="chooseOutputRoot"
+        >
           <FolderOpen :size="15" />
         </button>
       </div>
@@ -1543,7 +1740,13 @@ function resetStatus() {
       >
         <div v-for="group in nodeCategories" :key="group.label" class="menu-group">
           <div class="menu-group-title">{{ group.label }}</div>
-          <button v-for="item in group.items" :key="item.kind" type="button" class="menu-item" @click="addNode(item.kind)">
+          <button
+            v-for="item in group.items"
+            :key="item.kind"
+            type="button"
+            class="menu-item"
+            @click="addNode(item.kind)"
+          >
             {{ item.label }}
           </button>
         </div>
@@ -1564,15 +1767,16 @@ function resetStatus() {
 }
 
 .workflow-toolbar {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(360px, auto) auto minmax(300px, 1fr);
   gap: 10px;
   align-items: center;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
-  box-shadow: 0 1px 3px var(--color-shadow);
+  padding: 0 0 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .template-tools,
@@ -1596,7 +1800,7 @@ function resetStatus() {
 .tool-input {
   height: 32px;
   border: 1px solid var(--color-border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--color-input-bg);
   color: var(--color-text);
   padding: 0 9px;
@@ -1627,7 +1831,7 @@ function resetStatus() {
 .primary-tool {
   height: 32px;
   border: 1px solid var(--color-border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -1635,7 +1839,10 @@ function resetStatus() {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
 }
 
 .icon-tool {
@@ -1685,7 +1892,7 @@ function resetStatus() {
 .flow-canvas {
   min-height: 0;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--color-background);
   overflow: hidden;
 }
@@ -1702,7 +1909,7 @@ function resetStatus() {
 
 :deep(.vue-flow__controls) {
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -1711,7 +1918,7 @@ function resetStatus() {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface);
   overflow: hidden;
 }
@@ -1726,7 +1933,7 @@ function resetStatus() {
 .state-card {
   margin: 0 12px 8px;
   padding: 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
   color: var(--color-text);
   display: flex;
@@ -1794,7 +2001,7 @@ function resetStatus() {
   overflow-y: auto;
   padding: 8px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface);
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.2);
 }
@@ -1816,7 +2023,7 @@ function resetStatus() {
   width: 100%;
   min-height: 30px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
   text-align: left;
@@ -1830,9 +2037,8 @@ function resetStatus() {
   color: var(--color-text);
 }
 
-[data-theme="dark"] .workflow-toolbar,
-[data-theme="dark"] .run-panel,
-[data-theme="dark"] .node-menu {
+[data-theme='dark'] .run-panel,
+[data-theme='dark'] .node-menu {
   background: rgba(32, 32, 36, 0.88);
   border-color: rgba(63, 63, 70, 0.72);
 }

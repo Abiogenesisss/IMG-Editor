@@ -2,15 +2,30 @@ import { app, ipcMain, BrowserWindow, dialog, safeStorage } from 'electron'
 import { readdir, mkdir, rename, access, writeFile, readFile, stat, copyFile } from 'fs/promises'
 import sharp from 'sharp'
 import { join, extname, dirname, basename } from 'path'
-import { spawn, execSync, spawnSync } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import { randomBytes } from 'crypto'
 import { pathToFileURL } from 'url'
 import { grantLocalFileAccess } from './localFileAccess'
+import { forceStopTunnel, registerTunnelIPC, stopTunnel } from './tunnelManager'
 
-const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif', '.avif'])
-const GRAB_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+const IMAGE_EXTS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.bmp',
+  '.gif',
+  '.tiff',
+  '.tif',
+  '.avif'
+])
+const GRAB_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 const GRAB_PREVIEW_MAX_BYTES = 32 * 1024 * 1024
 const GRAB_FETCH_TIMEOUT_MS = 15000
+const BACKEND_CONTROL_TIMEOUT_MS = 1500
+const BACKEND_SHUTDOWN_TIMEOUT_MS = 3500
+const BACKEND_FORCE_KILL_WAIT_MS = 1000
 const GRAB_ATTRS = ['src', 'data-src', 'data-original', 'data-lazy-src', 'data-url', 'data-image']
 const GRAB_EXT_TO_TYPE = new Map([
   ['.jpg', 'jpg'],
@@ -72,6 +87,11 @@ const PYTHON_ENDPOINTS = new Set([
 let pythonProcess = null
 let pythonPort = null
 let startingPromise = null
+let shutdownRequested = false
+let shutdownIntent = null
+let shutdownPromise = null
+let shutdownComplete = false
+let exitScheduled = false
 const pythonAuthToken = randomBytes(32).toString('hex')
 const API_CONFIGS_FILE = 'api-configs.secure.json'
 const thumbnailCache = new Map()
@@ -100,7 +120,10 @@ function canRunPython(command, args = []) {
 }
 
 function isWindowsAppPython(command) {
-  return String(command || '').replace(/\//g, '\\').toLowerCase().includes('\\microsoft\\windowsapps\\')
+  return String(command || '')
+    .replace(/\//g, '\\')
+    .toLowerCase()
+    .includes('\\microsoft\\windowsapps\\')
 }
 
 function registeredPythonCandidates() {
@@ -156,10 +179,7 @@ function resolvePythonCandidates() {
       })
     }
   } else {
-    candidates.push(
-      { command: 'python3', args: [] },
-      { command: 'python', args: [] }
-    )
+    candidates.push({ command: 'python3', args: [] }, { command: 'python', args: [] })
   }
 
   const seen = new Set()
@@ -220,7 +240,10 @@ function startPythonCandidate(candidate, scriptPath, attempts) {
         } catch {
           /* ignore */
         }
-        pythonProcess = null
+        if (pythonProcess === py) {
+          pythonProcess = null
+          pythonPort = null
+        }
         fail('Python 后端启动超时，未能正常返回端口。')
       }
     }, 10000)
@@ -244,7 +267,10 @@ function startPythonCandidate(candidate, scriptPath, attempts) {
 
     py.on('error', (err) => {
       console.error('Python 启动失败:', err.message)
-      pythonProcess = null
+      if (pythonProcess === py) {
+        pythonProcess = null
+        pythonPort = null
+      }
       if (!resolved) {
         resolved = true
         clearTimeout(timer)
@@ -254,8 +280,10 @@ function startPythonCandidate(candidate, scriptPath, attempts) {
 
     py.on('exit', (code) => {
       console.log('Python 进程退出, code:', code)
-      pythonProcess = null
-      pythonPort = null
+      if (pythonProcess === py) {
+        pythonProcess = null
+        pythonPort = null
+      }
       if (!resolved) {
         resolved = true
         clearTimeout(timer)
@@ -279,6 +307,9 @@ async function startPythonBackendImpl() {
   }
 
   for (const candidate of candidates) {
+    if (shutdownRequested) {
+      throw new Error('Application is shutting down')
+    }
     try {
       return await startPythonCandidate(candidate, scriptPath, attempts)
     } catch {
@@ -286,10 +317,13 @@ async function startPythonBackendImpl() {
     }
   }
 
-  throw new Error(buildPythonStartupError('Python 后端启动失败，所有候选 Python 都不可用。', attempts))
+  throw new Error(
+    buildPythonStartupError('Python 后端启动失败，所有候选 Python 都不可用。', attempts)
+  )
 }
 
 function startPythonBackend() {
+  if (shutdownRequested) return Promise.reject(new Error('Application is shutting down'))
   if (startingPromise) return startingPromise
   if (pythonPort) return Promise.resolve(pythonPort)
 
@@ -300,26 +334,131 @@ function startPythonBackend() {
   return startingPromise
 }
 
-function stopPythonBackend() {
-  if (pythonProcess) {
-    const pid = pythonProcess.pid
-    try {
-      // Windows 下必须用 taskkill /T 杀掉整个进程树（包括 ProcessPoolExecutor 的 worker 子进程）
-      // 否则 worker 进程会变成孤儿进程，持续占用内存（尤其是加载了 ONNX 模型的 worker）
-      if (process.platform === 'win32') {
-        execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' })
-      } else {
-        // Unix 系统发送信号给进程组
-        try { process.kill(-pid, 'SIGKILL') } catch { pythonProcess.kill('SIGKILL') }
-      }
-    } catch {
-      // 进程可能已经退出
-      try { pythonProcess.kill() } catch { /* ignore */ }
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isProcessRunning(child) {
+  return Boolean(child && child.exitCode === null && child.signalCode === null)
+}
+
+function waitForProcessExit(child, timeoutMs) {
+  if (!isProcessRunning(child)) return Promise.resolve(true)
+
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.off('exit', onExit)
+      child.off('error', onExit)
+      resolve(result)
     }
-    pythonProcess = null
-    pythonPort = null
-    startingPromise = null
+    const onExit = () => finish(true)
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    child.once('exit', onExit)
+    child.once('error', onExit)
+  })
+}
+
+async function requestBackendControl(
+  endpoint,
+  timeoutMs = BACKEND_CONTROL_TIMEOUT_MS,
+  port = pythonPort
+) {
+  if (!port) return false
+
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-IMG-Editor-Token': pythonAuthToken
+      },
+      body: '{}',
+      signal: AbortSignal.timeout(timeoutMs)
+    })
+    return resp.ok
+  } catch {
+    return false
   }
+}
+
+function terminatePythonProcess(child) {
+  if (!isProcessRunning(child)) return
+
+  try {
+    if (process.platform === 'win32') {
+      child.kill()
+    } else {
+      process.kill(-child.pid, 'SIGTERM')
+    }
+  } catch {
+    try {
+      child.kill()
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function forceKillPythonProcessTree(child = pythonProcess) {
+  if (!isProcessRunning(child) || !child.pid) return
+
+  try {
+    if (process.platform === 'win32') {
+      // Kill the whole tree so ProcessPoolExecutor workers do not survive shutdown.
+      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: 3000
+      })
+    } else {
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        child.kill('SIGKILL')
+      }
+    }
+  } catch {
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function stopPythonBackend({ cancel = false, graceful = true } = {}) {
+  const child = pythonProcess
+  const port = pythonPort
+
+  startingPromise = null
+  if (!child && !port) return
+
+  if (cancel) {
+    await requestBackendControl('/cancel', BACKEND_CONTROL_TIMEOUT_MS, port)
+  }
+
+  if (graceful) {
+    await requestBackendControl('/shutdown', BACKEND_CONTROL_TIMEOUT_MS, port)
+  }
+
+  if (isProcessRunning(child)) {
+    const exited = graceful ? await waitForProcessExit(child, BACKEND_SHUTDOWN_TIMEOUT_MS) : false
+
+    if (!exited) {
+      terminatePythonProcess(child)
+      await delay(BACKEND_FORCE_KILL_WAIT_MS)
+      forceKillPythonProcessTree(child)
+      await waitForProcessExit(child, BACKEND_FORCE_KILL_WAIT_MS)
+    }
+  }
+
+  if (pythonProcess === child) pythonProcess = null
+  if (pythonPort === port) pythonPort = null
+  startingPromise = null
 }
 
 function apiConfigsPath() {
@@ -358,14 +497,16 @@ async function readApiConfigs() {
   try {
     const raw = JSON.parse(await readFile(apiConfigsPath(), 'utf-8'))
     const configs = Array.isArray(raw?.configs) ? raw.configs : []
-    return configs.map((config) => ({
-      id: String(config.id || ''),
-      name: String(config.name || ''),
-      model: String(config.model || ''),
-      endpoint: String(config.endpoint || ''),
-      apiKey: decryptApiKey(config.apiKeyProtected),
-      enabled: config.enabled !== false
-    })).filter((config) => config.id)
+    return configs
+      .map((config) => ({
+        id: String(config.id || ''),
+        name: String(config.name || ''),
+        model: String(config.model || ''),
+        endpoint: String(config.endpoint || ''),
+        apiKey: decryptApiKey(config.apiKeyProtected),
+        enabled: config.enabled !== false
+      }))
+      .filter((config) => config.id)
   } catch (err) {
     if (err.code === 'ENOENT') return []
     console.warn('Failed to read API configs:', err.message)
@@ -403,12 +544,81 @@ async function migrateApiConfigs(legacyConfigs) {
 let taskIdCounter = 0
 const activeControllers = new Map() // taskId -> AbortController
 
+function abortActiveControllers() {
+  for (const [id, controller] of activeControllers) {
+    controller.abort()
+    activeControllers.delete(id)
+  }
+}
+
+function destroyAllWindows() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.destroy()
+    }
+  }
+}
+
+async function cancelActiveTasks() {
+  const backendCancel = requestBackendControl('/cancel')
+  abortActiveControllers()
+  return backendCancel
+}
+
+async function runForcedQuitShutdown(reason) {
+  shutdownRequested = true
+
+  if (!shutdownPromise) {
+    shutdownPromise = (async () => {
+      try {
+        await cancelActiveTasks()
+        await stopTunnel()
+        await stopPythonBackend({ graceful: true })
+      } catch (err) {
+        console.warn(`Shutdown cleanup failed during ${reason}:`, err)
+      } finally {
+        destroyAllWindows()
+        shutdownComplete = true
+      }
+    })()
+  }
+
+  return shutdownPromise
+}
+
+export function isForcedQuitInProgress() {
+  return Boolean(shutdownIntent || shutdownPromise) && !shutdownComplete
+}
+
+export function requestForcedQuit(reason = 'app') {
+  if (shutdownIntent === 'update-restart') return shutdownPromise || Promise.resolve()
+  shutdownIntent = 'exit'
+
+  const quitPromise = runForcedQuitShutdown(reason)
+  if (!exitScheduled) {
+    exitScheduled = true
+    quitPromise.finally(() => {
+      setImmediate(() => app.exit(0))
+    })
+  }
+  return quitPromise
+}
+
+export async function prepareForUpdateRestart() {
+  shutdownIntent = 'update-restart'
+  await runForcedQuitShutdown('update-restart')
+}
+
+function forceQuitApp() {
+  requestForcedQuit('quit-app')
+}
+
 function grabFetchSignal(taskSignal) {
   return AbortSignal.any([taskSignal, AbortSignal.timeout(GRAB_FETCH_TIMEOUT_MS)])
 }
 
 function grabFetchErrorMessage(err, fallback) {
-  return err.name === 'TimeoutError' ? '请求超时' : (err.message || fallback)
+  return err.name === 'TimeoutError' ? '请求超时' : err.message || fallback
 }
 
 async function doFetch(endpoint, body, sender, controller) {
@@ -459,7 +669,9 @@ async function doFetch(endpoint, body, sender, controller) {
         if (event === 'progress' && sender) {
           try {
             sender.send('task-progress', JSON.parse(data))
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         } else if (event === 'error') {
           try {
             const errData = JSON.parse(data)
@@ -468,7 +680,11 @@ async function doFetch(endpoint, body, sender, controller) {
             result = { success: false, error: data }
           }
         } else if (event === 'done') {
-          try { result = JSON.parse(data) } catch { /* ignore */ }
+          try {
+            result = JSON.parse(data)
+          } catch {
+            /* ignore */
+          }
         }
       }
     }
@@ -497,7 +713,7 @@ async function callPython(endpoint, body, sender) {
       if (!isConnErr) throw err
 
       console.warn('Python 后端连接失败，正在重启…', err.message)
-      stopPythonBackend()
+      await stopPythonBackend()
       await startPythonBackend()
       return await doFetch(endpoint, body, sender, controller)
     }
@@ -668,7 +884,8 @@ function extractImageCandidates(html, pageUrl, options) {
     if (items.length >= maxPerSource) return items.slice(0, maxPerSource)
   }
 
-  const plainImageUrlPattern = /https?:\/\/[^"' <>)]+?\.(?:png|jpe?g|webp|gif|bmp|tiff?|avif)(?:\?[^"' <>)]+)?/gi
+  const plainImageUrlPattern =
+    /https?:\/\/[^"' <>)]+?\.(?:png|jpe?g|webp|gif|bmp|tiff?|avif)(?:\?[^"' <>)]+)?/gi
   let plainMatch
   while ((plainMatch = plainImageUrlPattern.exec(html)) !== null) {
     const url = normalizeSourceUrl(plainMatch[0], pageUrl)
@@ -706,7 +923,8 @@ function sanitizeGrabFilename(name) {
   const cleaned = Array.from(String(name || ''), (char) => {
     const code = char.charCodeAt(0)
     return code < 32 || '<>:"/\\|?*'.includes(char) ? '_' : char
-  }).join('')
+  })
+    .join('')
     .replace(/\s+/g, ' ')
     .replace(/\.+$/g, '')
     .trim()
@@ -714,11 +932,17 @@ function sanitizeGrabFilename(name) {
 }
 
 function getContentTypeExt(contentType) {
-  const normalized = String(contentType || '').split(';')[0].trim().toLowerCase()
+  const normalized = String(contentType || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase()
   return GRAB_TYPE_TO_EXT.get(normalized) || ''
 }
 
-function buildGrabHeaders(referer = '', accept = 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8') {
+function buildGrabHeaders(
+  referer = '',
+  accept = 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8'
+) {
   const headers = {
     'User-Agent': GRAB_USER_AGENT,
     Accept: accept,
@@ -739,25 +963,33 @@ function ensureImageExtension(filename, url, contentType) {
   try {
     const urlExt = extname(new URL(url).pathname).toLowerCase()
     if (GRAB_EXT_TO_TYPE.has(urlExt)) return `${clean}${urlExt}`
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   return `${clean}.jpg`
 }
 
-async function getUniqueGrabPath(outputDir, filename) {
-  const ext = extname(filename)
-  const stem = ext ? filename.slice(0, -ext.length) : filename
-  let target = join(outputDir, filename)
+async function getAvailablePath(initialPath, makeNextPath) {
+  let target = initialPath
   let counter = 2
   while (true) {
     try {
       await access(target)
-      target = join(outputDir, `${stem}_${counter}${ext}`)
+      target = makeNextPath(counter)
       counter += 1
     } catch {
       return target
     }
   }
+}
+
+async function getUniqueGrabPath(outputDir, filename) {
+  const ext = extname(filename)
+  const stem = ext ? filename.slice(0, -ext.length) : filename
+  return getAvailablePath(join(outputDir, filename), (counter) =>
+    join(outputDir, `${stem}_${counter}${ext}`)
+  )
 }
 
 async function scanImageSources(event, body = {}) {
@@ -791,7 +1023,10 @@ async function scanImageSources(event, body = {}) {
           pushGrabCandidate(items, seen, sourceUrl, sourceUrl, 'direct', index, allowedTypes)
         } else {
           const response = await fetch(sourceUrl, {
-            headers: buildGrabHeaders('', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'),
+            headers: buildGrabHeaders(
+              '',
+              'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+            ),
             signal: grabFetchSignal(controller.signal)
           })
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -875,7 +1110,11 @@ async function downloadGrabImages(event, body = {}) {
         const buffer = Buffer.from(await response.arrayBuffer())
         if (buffer.length === 0) throw new Error('空文件')
 
-        const filename = ensureImageExtension(item.filename || deriveGrabFilename(url, item.type), url, contentType)
+        const filename = ensureImageExtension(
+          item.filename || deriveGrabFilename(url, item.type),
+          url,
+          contentType
+        )
         const targetPath = await getUniqueGrabPath(outputDir, filename)
         await writeFile(targetPath, buffer)
         results.push({
@@ -888,7 +1127,12 @@ async function downloadGrabImages(event, body = {}) {
         })
       } catch (err) {
         if (err.name === 'AbortError') throw err
-        results.push({ id: item.id, url, success: false, error: grabFetchErrorMessage(err, '保存失败') })
+        results.push({
+          id: item.id,
+          url,
+          success: false,
+          error: grabFetchErrorMessage(err, '保存失败')
+        })
       } finally {
         event.sender.send('task-progress', {
           scope: 'grab-download',
@@ -956,7 +1200,10 @@ async function loadGrabPreview(_event, body = {}) {
         dataUrl: `data:image/webp;base64,${preview.toString('base64')}`
       }
     } catch (err) {
-      const mime = String(contentType || '').split(';')[0].trim().toLowerCase()
+      const mime = String(contentType || '')
+        .split(';')[0]
+        .trim()
+        .toLowerCase()
       if (mime.startsWith('image/') && input.length <= 8 * 1024 * 1024) {
         return {
           success: true,
@@ -978,7 +1225,9 @@ function isImageFileName(name) {
 }
 
 function toLocalFileUrl(filePath) {
-  return pathToFileURL(filePath).toString().replace(/^file:/, 'local-file:')
+  return pathToFileURL(filePath)
+    .toString()
+    .replace(/^file:/, 'local-file:')
 }
 
 function clampNumber(value, fallback, min = -Infinity, max = Infinity) {
@@ -1027,7 +1276,10 @@ function approximateRatio(ar, maxDenominator = 16) {
 }
 
 function collectRatioBuckets(images, options) {
-  const maxDenominator = Math.max(2, Math.round(clampNumber(options.maxRatioDenominator, 16, 2, 200)))
+  const maxDenominator = Math.max(
+    2,
+    Math.round(clampNumber(options.maxRatioDenominator, 16, 2, 200))
+  )
   const groups = new Map()
 
   for (const image of images) {
@@ -1065,7 +1317,10 @@ function sizeBucketForAr(ar, baseResolution, bucketStep) {
 function simulateTrainingBuckets(images, options) {
   const minAr = clampNumber(options.minAr, 0.5, 0.01, 100)
   const maxAr = clampNumber(options.maxAr, 2.0, minAr, 100)
-  const baseResolution = Math.max(64, Math.round(clampNumber(options.baseResolution, 1024, 64, 8192)))
+  const baseResolution = Math.max(
+    64,
+    Math.round(clampNumber(options.baseResolution, 1024, 64, 8192))
+  )
   const bucketStep = Math.max(1, Math.round(clampNumber(options.bucketStep, 16, 1, 1024)))
   const batchSize = Math.max(1, Math.round(clampNumber(options.batchSize, 4, 1, 1000000)))
   const exactRatios = collectRatioBuckets(images, options)
@@ -1227,7 +1482,9 @@ function buildBucketToml(result) {
     `num_ar_buckets = ${result.numArBuckets}`,
     '',
     'frame_buckets = [1]'
-  ].filter((line, index, lines) => line !== '' || lines[index - 1] !== '').join('\n')
+  ]
+    .filter((line, index, lines) => line !== '' || lines[index - 1] !== '')
+    .join('\n')
 }
 
 async function readImagesRecursiveFromDir(folderPath) {
@@ -1259,13 +1516,15 @@ async function readImagesRecursiveFromDir(folderPath) {
 
 function sanitizeWorkflowSegment(value) {
   const reservedChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
-  return String(value || 'workflow')
-    .split('')
-    .map((char) => (reservedChars.has(char) || char.charCodeAt(0) < 32 ? '_' : char))
-    .join('')
-    .replace(/\s+/g, '_')
-    .replace(/\.+$/g, '')
-    .slice(0, 80) || 'workflow'
+  return (
+    String(value || 'workflow')
+      .split('')
+      .map((char) => (reservedChars.has(char) || char.charCodeAt(0) < 32 ? '_' : char))
+      .join('')
+      .replace(/\s+/g, '_')
+      .replace(/\.+$/g, '')
+      .slice(0, 80) || 'workflow'
+  )
 }
 
 function getDefaultWorkflowRoot() {
@@ -1279,42 +1538,21 @@ function workflowTimestamp() {
 }
 
 async function uniqueDirectoryPath(parent, name) {
-  let target = join(parent, name)
-  let counter = 2
-  while (true) {
-    try {
-      await access(target)
-      target = join(parent, `${name}_${counter}`)
-      counter += 1
-    } catch {
-      return target
-    }
-  }
+  return getAvailablePath(join(parent, name), (counter) => join(parent, `${name}_${counter}`))
 }
 
 async function uniqueCopyTarget(outputDir, sourcePath) {
   const sourceName = basename(sourcePath)
   const ext = extname(sourceName)
   const stem = ext ? sourceName.slice(0, -ext.length) : sourceName
-  let target = join(outputDir, sourceName)
-  let counter = 2
-  while (true) {
-    try {
-      await access(target)
-      target = join(outputDir, `${stem}_${counter}${ext}`)
-      counter += 1
-    } catch {
-      return target
-    }
-  }
+  return getAvailablePath(join(outputDir, sourceName), (counter) =>
+    join(outputDir, `${stem}_${counter}${ext}`)
+  )
 }
 
 export function registerIPC() {
   ipcMain.on('quit-app', (event) => {
-    stopPythonBackend()
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (win) win.destroy()
-    app.quit()
+    forceQuitApp(event.sender)
   })
 
   ipcMain.on('minimize-app', (event) => {
@@ -1339,7 +1577,9 @@ export function registerIPC() {
 
   ipcMain.handle('save-api-configs', async (_event, configs) => writeApiConfigs(configs))
 
-  ipcMain.handle('migrate-api-configs', async (_event, legacyConfigs) => migrateApiConfigs(legacyConfigs))
+  ipcMain.handle('migrate-api-configs', async (_event, legacyConfigs) =>
+    migrateApiConfigs(legacyConfigs)
+  )
 
   ipcMain.handle('select-folder', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -1352,26 +1592,16 @@ export function registerIPC() {
     return folderPath
   })
 
-  ipcMain.handle('select-file', async (event, options = {}) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const result = await dialog.showOpenDialog(win, {
-      properties: ['openFile'],
-      filters: Array.isArray(options.filters) ? options.filters : undefined
-    })
-    if (result.canceled) return null
-    const filePath = result.filePaths[0]
-    await grantLocalFileAccess(filePath)
-    return filePath
-  })
-
   ipcMain.handle('save-text-file', async (event, options = {}) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showSaveDialog(win, {
       defaultPath: options.defaultPath || 'config.toml',
-      filters: Array.isArray(options.filters) ? options.filters : [
-        { name: 'TOML', extensions: ['toml'] },
-        { name: 'Text', extensions: ['txt'] }
-      ]
+      filters: Array.isArray(options.filters)
+        ? options.filters
+        : [
+            { name: 'TOML', extensions: ['toml'] },
+            { name: 'Text', extensions: ['txt'] }
+          ]
     })
     if (result.canceled || !result.filePath) return { canceled: true }
     await mkdir(dirname(result.filePath), { recursive: true })
@@ -1606,7 +1836,9 @@ export function registerIPC() {
         const prefix = `${stem}_`
         for (const entry of entries) {
           if (entry.startsWith(prefix) && (!ext || entry.endsWith(ext))) {
-            const numStr = ext ? entry.slice(prefix.length, -ext.length) : entry.slice(prefix.length)
+            const numStr = ext
+              ? entry.slice(prefix.length, -ext.length)
+              : entry.slice(prefix.length)
             const num = parseInt(numStr, 10)
             if (!isNaN(num) && num > maxCounter) {
               maxCounter = num
@@ -1629,6 +1861,7 @@ export function registerIPC() {
 
   // --- Python 后端通用代理 ---
   registerPythonProxy()
+  registerTunnelIPC(ipcMain)
 
   // --- 路径检测 ---
   ipcMain.handle('check-path-exists', async (_event, targetPath) => {
@@ -1642,28 +1875,9 @@ export function registerIPC() {
 
   // 终止所有进行中的任务
   ipcMain.handle('abort-task', async () => {
-    // 先中断 Node 端的 fetch 请求
-    for (const [id, controller] of activeControllers) {
-      controller.abort()
-      activeControllers.delete(id)
-    }
-    // 尝试优雅取消 Python 端正在执行的任务
-    if (pythonPort) {
-      try {
-        await fetch(`http://127.0.0.1:${pythonPort}/cancel`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-IMG-Editor-Token': pythonAuthToken
-          },
-          body: '{}',
-          signal: AbortSignal.timeout(2000)
-        })
-        return { success: true }
-      } catch {
-        // 优雅取消失败，回退到杀进程
-        stopPythonBackend()
-      }
+    const cancelled = await cancelActiveTasks()
+    if (!cancelled && pythonPort) {
+      await stopPythonBackend({ graceful: true })
     }
     return { success: true }
   })
@@ -1726,7 +1940,16 @@ export function registerIPC() {
   })
 }
 
+app.on('before-quit', (event) => {
+  if (shutdownComplete) return
+  event.preventDefault()
+  requestForcedQuit('before-quit')
+})
+
 // 应用退出时清理 Python 进程
 app.on('will-quit', () => {
-  stopPythonBackend()
+  shutdownRequested = true
+  abortActiveControllers()
+  forceStopTunnel()
+  if (!shutdownComplete) forceKillPythonProcessTree()
 })
