@@ -23,6 +23,7 @@ const GRAB_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 const GRAB_PREVIEW_MAX_BYTES = 32 * 1024 * 1024
 const GRAB_FETCH_TIMEOUT_MS = 15000
+const BACKEND_STARTUP_TIMEOUT_MS = 45000
 const BACKEND_CONTROL_TIMEOUT_MS = 1500
 const BACKEND_SHUTDOWN_TIMEOUT_MS = 3500
 const BACKEND_FORCE_KILL_WAIT_MS = 1000
@@ -246,7 +247,7 @@ function startPythonCandidate(candidate, scriptPath, attempts) {
         }
         fail('Python 后端启动超时，未能正常返回端口。')
       }
-    }, 10000)
+    }, BACKEND_STARTUP_TIMEOUT_MS)
 
     py.stdout.on('data', (data) => {
       const msg = data.toString().trim()
@@ -704,8 +705,9 @@ async function callPython(endpoint, body, sender) {
   const controller = new AbortController()
   activeControllers.set(taskId, controller)
   try {
+    let result
     try {
-      return await doFetch(endpoint, body, sender, controller)
+      result = await doFetch(endpoint, body, sender, controller)
     } catch (err) {
       // 连接被拒绝说明 Python 进程已崩溃，尝试重启一次
       if (err.name === 'AbortError') throw err
@@ -715,11 +717,26 @@ async function callPython(endpoint, body, sender) {
       console.warn('Python 后端连接失败，正在重启…', err.message)
       await stopPythonBackend()
       await startPythonBackend()
-      return await doFetch(endpoint, body, sender, controller)
+      result = await doFetch(endpoint, body, sender, controller)
     }
+    await grantResultLocalFileAccess(body, result)
+    return result
   } finally {
     activeControllers.delete(taskId)
   }
+}
+
+async function grantResultLocalFileAccess(body = {}, result = {}) {
+  const dirs = new Set()
+  if (body.output_dir) dirs.add(body.output_dir)
+  if (result.output_dir) dirs.add(result.output_dir)
+
+  for (const item of Array.isArray(result.results) ? result.results : []) {
+    if (item?.path) dirs.add(dirname(item.path))
+    if (item?.file) dirs.add(dirname(item.file))
+  }
+
+  await Promise.all([...dirs].filter(Boolean).map((dir) => grantLocalFileAccess(dir)))
 }
 
 // --- 通用 Python 代理：前端直接传 endpoint + body，无需逐个注册 ---
@@ -1086,6 +1103,7 @@ async function downloadGrabImages(event, body = {}) {
 
   try {
     await mkdir(outputDir, { recursive: true })
+    await grantLocalFileAccess(outputDir)
 
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index]
@@ -1230,263 +1248,6 @@ function toLocalFileUrl(filePath) {
     .replace(/^file:/, 'local-file:')
 }
 
-function clampNumber(value, fallback, min = -Infinity, max = Infinity) {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return fallback
-  return Math.min(max, Math.max(min, n))
-}
-
-function quantile(sortedValues, q) {
-  if (!sortedValues.length) return 0
-  const pos = (sortedValues.length - 1) * q
-  const base = Math.floor(pos)
-  const rest = pos - base
-  const next = sortedValues[base + 1]
-  if (next === undefined) return sortedValues[base]
-  return sortedValues[base] + rest * (next - sortedValues[base])
-}
-
-function roundToNearestMultiple(value, multiple) {
-  return Math.max(multiple, Math.round(value / multiple) * multiple)
-}
-
-function gcd(a, b) {
-  let x = Math.abs(Math.round(a))
-  let y = Math.abs(Math.round(b))
-  while (y) {
-    const next = x % y
-    x = y
-    y = next
-  }
-  return x || 1
-}
-
-function approximateRatio(ar, maxDenominator = 16) {
-  let best = { w: 1, h: 1, ar: 1, error: Math.abs(ar - 1) }
-  for (let h = 1; h <= maxDenominator; h += 1) {
-    const w = Math.max(1, Math.round(ar * h))
-    const candidateAr = w / h
-    const error = Math.abs(candidateAr - ar)
-    if (error < best.error) {
-      const div = gcd(w, h)
-      best = { w: w / div, h: h / div, ar: candidateAr, error }
-    }
-  }
-  return best
-}
-
-function collectRatioBuckets(images, options) {
-  const maxDenominator = Math.max(
-    2,
-    Math.round(clampNumber(options.maxRatioDenominator, 16, 2, 200))
-  )
-  const groups = new Map()
-
-  for (const image of images) {
-    const ratio = approximateRatio(image.ar, maxDenominator)
-    const key = `${ratio.w}:${ratio.h}`
-    const existing = groups.get(key) || {
-      w: ratio.w,
-      h: ratio.h,
-      targetAr: ratio.w / ratio.h,
-      count: 0,
-      examples: []
-    }
-    existing.count += 1
-    if (existing.examples.length < 5) {
-      existing.examples.push({
-        name: image.name,
-        width: image.width,
-        height: image.height,
-        ar: image.ar
-      })
-    }
-    groups.set(key, existing)
-  }
-
-  return [...groups.values()].sort((a, b) => a.targetAr - b.targetAr)
-}
-
-function sizeBucketForAr(ar, baseResolution, bucketStep) {
-  const area = baseResolution * baseResolution
-  const width = roundToNearestMultiple(Math.sqrt(area * ar), bucketStep)
-  const height = roundToNearestMultiple(area / Math.sqrt(area * ar), bucketStep)
-  return { width, height, actualAr: width / height }
-}
-
-function simulateTrainingBuckets(images, options) {
-  const minAr = clampNumber(options.minAr, 0.5, 0.01, 100)
-  const maxAr = clampNumber(options.maxAr, 2.0, minAr, 100)
-  const baseResolution = Math.max(
-    64,
-    Math.round(clampNumber(options.baseResolution, 1024, 64, 8192))
-  )
-  const bucketStep = Math.max(1, Math.round(clampNumber(options.bucketStep, 16, 1, 1024)))
-  const batchSize = Math.max(1, Math.round(clampNumber(options.batchSize, 4, 1, 1000000)))
-  const exactRatios = collectRatioBuckets(images, options)
-
-  const buckets = exactRatios.map((ratio, index) => ({
-    index,
-    targetAr: ratio.targetAr,
-    ratio: [ratio.w, ratio.h],
-    ratioLabel: `${ratio.w}:${ratio.h}`,
-    ...sizeBucketForAr(ratio.targetAr, baseResolution, bucketStep),
-    count: 0,
-    used: 0,
-    dropped: 0,
-    examples: [],
-    images: []
-  }))
-
-  for (const image of images) {
-    const logAr = Math.log(image.ar)
-    let bestIndex = 0
-    let bestDiff = Infinity
-    for (let i = 0; i < buckets.length; i += 1) {
-      const diff = Math.abs(logAr - Math.log(buckets[i].targetAr))
-      if (diff < bestDiff) {
-        bestDiff = diff
-        bestIndex = i
-      }
-    }
-    const bucket = buckets[bestIndex]
-    bucket.count += 1
-    bucket.images.push({
-      name: image.name,
-      path: image.path,
-      url: image.url,
-      width: image.width,
-      height: image.height,
-      ar: image.ar
-    })
-    if (bucket.examples.length < 5) {
-      bucket.examples.push({
-        name: image.name,
-        width: image.width,
-        height: image.height,
-        ar: image.ar
-      })
-    }
-  }
-
-  for (const bucket of buckets) {
-    bucket.used = Math.floor(bucket.count / batchSize) * batchSize
-    bucket.dropped = bucket.count - bucket.used
-  }
-
-  const nonEmptyBuckets = buckets.filter((bucket) => bucket.count > 0)
-  const usableImages = buckets.reduce((sum, bucket) => sum + bucket.used, 0)
-  const tailDroppedImages = buckets.reduce((sum, bucket) => sum + bucket.dropped, 0)
-
-  return {
-    minAr,
-    maxAr,
-    numArBuckets: exactRatios.length,
-    arBuckets: exactRatios.map((ratio) => [ratio.w, ratio.h]),
-    baseResolution,
-    bucketStep,
-    batchSize,
-    totalImages: images.length,
-    nonEmptyBucketCount: nonEmptyBuckets.length,
-    usableImages,
-    tailDroppedImages,
-    efficiency: images.length ? (usableImages / images.length) * 100 : 0,
-    buckets
-  }
-}
-
-function recommendArRange(images) {
-  const ars = images.map((image) => image.ar).sort((a, b) => a - b)
-  const q05 = quantile(ars, 0.05)
-  const q50 = quantile(ars, 0.5)
-  const q95 = quantile(ars, 0.95)
-  return {
-    q05,
-    q50,
-    q95,
-    minAr: Math.max(0.5, q05 * 0.8),
-    maxAr: Math.min(2.0, q95 * 1.2)
-  }
-}
-
-async function collectImageFiles(folderPath, recursive) {
-  const files = []
-
-  async function visit(dir) {
-    let entries
-    try {
-      entries = await readdir(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        if (recursive) await visit(fullPath)
-      } else if (entry.isFile() && isImageFileName(entry.name)) {
-        files.push(fullPath)
-      }
-    }
-  }
-
-  await visit(folderPath)
-  return files.sort((a, b) => a.localeCompare(b))
-}
-
-async function readImageDimensions(filePath) {
-  const metadata = await sharp(filePath, { pages: 1, limitInputPixels: false }).metadata()
-  const width = metadata.width || 0
-  const height = metadata.height || 0
-  if (!width || !height) throw new Error('missing image dimensions')
-  return { width, height }
-}
-
-async function mapWithConcurrency(items, limit, mapper) {
-  const results = new Array(items.length)
-  let nextIndex = 0
-  const workerCount = Math.min(limit, items.length)
-
-  async function worker() {
-    while (nextIndex < items.length) {
-      const index = nextIndex
-      nextIndex += 1
-      results[index] = await mapper(items[index], index)
-    }
-  }
-
-  await Promise.all(Array.from({ length: workerCount }, worker))
-  return results
-}
-
-function buildBucketToml(result) {
-  const arPairs = result.arBuckets?.length
-    ? result.arBuckets.map(([w, h]) => `[${w}, ${h}]`).join(', ')
-    : ''
-  const exactLines = arPairs
-    ? [
-        '# Exact aspect-ratio buckets derived from the dataset.',
-        '# When ar_buckets is set, diffusion-pipe uses these ratios directly.',
-        `ar_buckets = [${arPairs}]`,
-        ''
-      ]
-    : []
-  return [
-    `resolutions = [${result.baseResolution}]`,
-    '',
-    'enable_ar_bucket = true',
-    ...exactLines,
-    arPairs ? '# Kept for GUI compatibility; ar_buckets takes priority.' : '',
-    `min_ar = ${result.minAr.toFixed(3)}`,
-    `max_ar = ${result.maxAr.toFixed(3)}`,
-    `num_ar_buckets = ${result.numArBuckets}`,
-    '',
-    'frame_buckets = [1]'
-  ]
-    .filter((line, index, lines) => line !== '' || lines[index - 1] !== '')
-    .join('\n')
-}
-
 async function readImagesRecursiveFromDir(folderPath) {
   const results = []
   async function visit(dir) {
@@ -1621,6 +1382,7 @@ export function registerIPC() {
       await access(outPath)
     } catch {
       // 基础目录不存在，直接使用
+      await grantLocalFileAccess(outPath)
       return outPath
     }
 
@@ -1638,15 +1400,19 @@ export function registerIPC() {
           }
         }
       }
-      return join(parent, `${outName}_${maxCounter + 1}`)
+      const nextOutPath = join(parent, `${outName}_${maxCounter + 1}`)
+      await grantLocalFileAccess(nextOutPath)
+      return nextOutPath
     } catch {
-      // 降级保护：如果读取目录失败，用时间戳保证不冲突
-      return join(parent, `${outName}_${Date.now()}`)
+      const fallbackOutPath = join(parent, `${outName}_${Date.now()}`)
+      await grantLocalFileAccess(fallbackOutPath)
+      return fallbackOutPath
     }
   })
 
   ipcMain.handle('read-images', async (_event, folderPath) => {
     try {
+      await grantLocalFileAccess(folderPath)
       const results = []
       const entries = await readdir(folderPath)
       for (const entry of entries) {
@@ -1668,83 +1434,10 @@ export function registerIPC() {
   ipcMain.handle('read-images-recursive', async (_event, folderPath) => {
     try {
       if (!folderPath) return []
+      await grantLocalFileAccess(folderPath)
       return await readImagesRecursiveFromDir(folderPath)
     } catch {
       return []
-    }
-  })
-
-  ipcMain.handle('analyze-training-buckets', async (_event, options = {}) => {
-    try {
-      const folderPath = String(options.folderPath || '').trim()
-      if (!folderPath) return { success: false, error: '请选择训练集目录' }
-
-      const files = await collectImageFiles(folderPath, options.recursive !== false)
-      if (!files.length) return { success: false, error: '目录中没有找到图片文件' }
-
-      const scanned = await mapWithConcurrency(files, 8, async (filePath) => {
-        try {
-          const { width, height } = await readImageDimensions(filePath)
-          return {
-            ok: true,
-            name: basename(filePath),
-            path: filePath,
-            url: toLocalFileUrl(filePath),
-            width,
-            height,
-            ar: width / height
-          }
-        } catch (err) {
-          return {
-            ok: false,
-            name: basename(filePath),
-            path: filePath,
-            error: err.message
-          }
-        }
-      })
-
-      const images = scanned.filter((item) => item.ok)
-      const skipped = scanned.filter((item) => !item.ok)
-      if (!images.length) return { success: false, error: '图片尺寸读取失败，请检查文件格式' }
-
-      const rangeStats = recommendArRange(images)
-      const minAr = options.useRecommendedRange
-        ? rangeStats.minAr
-        : clampNumber(options.minAr, rangeStats.minAr, 0.01, 100)
-      const maxAr = options.useRecommendedRange
-        ? rangeStats.maxAr
-        : clampNumber(options.maxAr, rangeStats.maxAr, minAr, 100)
-
-      const baseOptions = {
-        ...options,
-        minAr,
-        maxAr
-      }
-      const result = simulateTrainingBuckets(images, baseOptions)
-      const sortedArs = images.map((image) => image.ar).sort((a, b) => a - b)
-
-      return {
-        success: true,
-        folderPath,
-        totalFiles: files.length,
-        totalImages: images.length,
-        skippedCount: skipped.length,
-        skipped: skipped.slice(0, 20),
-        stats: {
-          minAr: sortedArs[0],
-          maxAr: sortedArs[sortedArs.length - 1],
-          q05: rangeStats.q05,
-          medianAr: rangeStats.q50,
-          q95: rangeStats.q95,
-          recommendedMinAr: rangeStats.minAr,
-          recommendedMaxAr: rangeStats.maxAr
-        },
-        result,
-        toml: buildBucketToml(result)
-      }
-    } catch (err) {
-      return { success: false, error: err.message || '分桶分析失败' }
     }
   })
 
@@ -1755,6 +1448,7 @@ export function registerIPC() {
       const dirName = `${sanitizeWorkflowSegment(name)}_${workflowTimestamp()}`
       const target = await uniqueDirectoryPath(parent, dirName)
       await mkdir(target, { recursive: true })
+      await grantLocalFileAccess(target)
       return target
     } catch (err) {
       return { success: false, error: err.message }
@@ -1771,6 +1465,7 @@ export function registerIPC() {
         return { success: false, error: 'no output directory', results }
       }
       await mkdir(outputDir, { recursive: true })
+      await grantLocalFileAccess(outputDir)
       for (const filePath of files) {
         try {
           const target = await uniqueCopyTarget(outputDir, filePath)

@@ -6,7 +6,6 @@ import {
   Cable,
   Copy,
   Download,
-  LayoutGrid,
   Maximize2,
   MessageSquareText,
   Minus,
@@ -90,18 +89,17 @@ const updateVersion = ref('')
 const updatePercent = ref(0)
 
 const allNavItems = [
-  { path: '/grab', label: '图片抓取', icon: Download, color: '#00b8c8' },
-  { path: '/process', label: '图片处理', icon: WandSparkles, color: '#f25b9d' },
-  { path: '/augment', label: '数据增强', icon: Sparkles, color: '#f4c430' },
-  { path: '/upscale', label: '超分辨率', icon: Maximize2, color: '#2f7893' },
-  { path: '/tagger', label: '图片打标', icon: Tags, color: '#22c7a9' },
-  { path: '/caption', label: 'Caption', icon: MessageSquareText, color: '#f07349' },
-  { path: '/buckets', label: '分桶分析', icon: LayoutGrid, color: '#e45aa5' },
-  { path: '/workflow', label: '工作流', icon: Waypoints, color: '#45a6ff' },
-  { path: '/tunnel', label: '隧道工具', icon: Cable, color: '#8b5cf6' }
+  { path: '/grab', label: '图片抓取', icon: Download },
+  { path: '/process', label: '图片处理', icon: WandSparkles },
+  { path: '/augment', label: '数据增强', icon: Sparkles },
+  { path: '/upscale', label: '超分辨率', icon: Maximize2 },
+  { path: '/tagger', label: '图片打标', icon: Tags },
+  { path: '/caption', label: 'Caption', icon: MessageSquareText },
+  { path: '/workflow', label: '工作流', icon: Waypoints },
+  { path: '/tunnel', label: '隧道工具', icon: Cable }
 ]
 
-const settingsNavItem = { path: '/settings', label: '设置', icon: Settings, color: '#2f7893' }
+const settingsNavItem = { path: '/settings', label: '设置', icon: Settings }
 
 // --- 菜单显示设置 ---
 function loadMenuVisible() {
@@ -229,7 +227,6 @@ onUnmounted(() => {
             v-for="item in navItems"
             :key="item.path"
             :class="['rail-btn', { active: activeNav === item.path }]"
-            :style="{ '--rail-accent': item.color }"
             :title="item.label"
             :aria-label="item.label"
             @click="navigateTo(item.path)"
@@ -242,7 +239,6 @@ onUnmounted(() => {
         <div class="rail-footer">
           <button
             class="rail-btn rail-tool"
-            :style="{ '--rail-accent': theme === 'dark' ? '#f4c430' : '#00b8c8' }"
             :title="theme === 'light' ? '深色模式' : '浅色模式'"
             :aria-label="theme === 'light' ? '深色模式' : '浅色模式'"
             @click="toggleTheme"
@@ -257,7 +253,6 @@ onUnmounted(() => {
           </button>
           <button
             :class="['rail-btn', 'rail-tool', { active: activeNav === settingsNavItem.path }]"
-            :style="{ '--rail-accent': settingsNavItem.color }"
             :title="settingsNavItem.label"
             :aria-label="settingsNavItem.label"
             @click="openSettings"
@@ -297,7 +292,6 @@ onUnmounted(() => {
                 'ImageTagger',
                 'ImageUpscale',
                 'ImageCaption',
-                'BucketBalancer',
                 'WorkflowCanvas',
                 'TunnelTool'
               ]"
@@ -332,8 +326,8 @@ onUnmounted(() => {
 .app-layout::before {
   inset: 48px 28px 28px 86px;
   background-image:
-    linear-gradient(rgba(0, 185, 200, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 185, 200, 0.07) 1px, transparent 1px);
+    linear-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.035) 1px, transparent 1px);
   background-size: 36px 36px;
   opacity: 0.45;
 }
@@ -430,22 +424,14 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 12px;
   background: var(--color-surface);
-  border-right: 1px solid var(--color-border);
-  box-shadow: none;
+  border-right: 1px solid var(--color-border-light);
+  box-shadow: 6px 0 18px -14px rgba(17, 17, 17, 0.22);
   position: relative;
   z-index: 4;
 }
 
 .app-rail::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: -1px;
-  bottom: 0;
-  width: var(--pjsk-divider-size);
-  border-radius: 0;
-  background: var(--pjsk-divider-gradient-y);
-  opacity: 1;
+  display: none;
 }
 
 .rail-nav,
@@ -463,12 +449,11 @@ onUnmounted(() => {
 }
 
 .rail-btn {
-  --rail-accent: var(--color-accent);
   position: relative;
   width: 44px;
   height: 40px;
   border: 1px solid transparent;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
   display: inline-flex;
@@ -484,15 +469,7 @@ onUnmounted(() => {
 
 .rail-btn::before {
   content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  border-radius: 0;
-  background: var(--rail-accent);
-  opacity: 0;
-  transition: opacity 0.18s ease;
+  display: none;
 }
 
 .rail-btn::after {
@@ -506,30 +483,30 @@ onUnmounted(() => {
 }
 
 .rail-btn:hover {
-  color: var(--rail-accent);
+  color: var(--color-text);
   background: var(--color-surface-hover);
-  border-color: var(--color-border);
+  border-color: var(--color-border-hover);
 }
 
 .rail-btn:hover::before {
-  opacity: 1;
+  opacity: 0;
 }
 
 .rail-btn.active {
-  color: var(--rail-accent);
-  background: #ffffff;
-  border-color: var(--rail-accent);
-  box-shadow: none;
+  color: var(--color-active-text);
+  background: var(--color-active-bg);
+  border-color: var(--color-active-bg);
+  box-shadow: var(--shadow-button);
 }
 
 .rail-btn.active::before {
-  opacity: 1;
+  opacity: 0;
 }
 
 .rail-tool {
   width: 44px;
   height: 40px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .rail-tooltip {
@@ -538,9 +515,9 @@ onUnmounted(() => {
   top: 50%;
   transform: translate(-4px, -50%);
   padding: 6px 10px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   color: #ffffff;
-  background: #18384a;
+  background: #111111;
   box-shadow: none;
   font-size: 12px;
   font-weight: 700;
@@ -591,18 +568,27 @@ onUnmounted(() => {
   z-index: 1;
 }
 
-/* 路由切换过渡动画 */
-.route-fade-enter-active,
+/* 路由切换过渡动画 —— 淡入 + 轻微上浮，丝滑 */
+.route-fade-enter-active {
+  transition:
+    opacity 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .route-fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
 }
 
 .route-fade-enter-from {
   opacity: 0;
+  transform: translateY(8px);
 }
 
 .route-fade-leave-to {
   opacity: 0;
+  transform: translateY(-6px);
 }
 
 /* 更新提示条 */
@@ -614,33 +600,38 @@ onUnmounted(() => {
   margin: 0 0 10px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-left: 4px solid var(--color-accent);
-  border-radius: 2px;
+  border-left: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   font-size: 13px;
   color: var(--color-text);
   flex-shrink: 0;
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
   z-index: 2;
 }
 
 .update-btn {
   padding: 3px 12px;
-  border: none;
-  border-radius: 2px;
-  background: #4f46e5;
-  color: #fff;
+  border: 1px solid var(--color-active-bg);
+  border-radius: var(--radius-sm);
+  background: var(--color-active-bg);
+  color: var(--color-active-text);
   font-size: 12px;
   cursor: pointer;
-  transition: background 0.15s;
+  box-shadow: var(--shadow-button);
+  transition:
+    background 0.15s,
+    filter 0.15s;
 }
 
 .update-btn:hover {
-  background: #4338ca;
+  filter: brightness(1.08);
 }
 
 .update-btn.dismiss {
   background: transparent;
-  color: #6366f1;
+  border-color: var(--color-border);
+  color: var(--color-text);
+  box-shadow: none;
 }
 
 .update-btn.dismiss:hover {
@@ -651,14 +642,14 @@ onUnmounted(() => {
   flex: 1;
   height: 6px;
   background: var(--color-border);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .update-progress-inner {
   height: 100%;
-  background: linear-gradient(90deg, #00b9c8 0 36%, #f25b9d 36% 72%, #f4c430 72% 100%);
-  border-radius: 2px;
+  background: var(--color-active-bg);
+  border-radius: var(--radius-sm);
   transition: width 0.3s ease;
 }
 
@@ -666,19 +657,27 @@ onUnmounted(() => {
   background: var(--color-background);
 }
 
+[data-theme='dark'] .app-layout::before {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+}
+
 [data-theme='dark'] .app-rail {
   background: var(--color-surface);
-  box-shadow: none;
+  box-shadow: 6px 0 20px -14px rgba(0, 0, 0, 0.7);
 }
 
 [data-theme='dark'] .rail-btn.active {
-  background: var(--color-surface-soft);
-  box-shadow: none;
+  color: var(--color-active-text);
+  background: var(--color-active-bg);
+  border-color: var(--color-active-bg);
+  box-shadow: var(--shadow-button);
 }
 
 [data-theme='dark'] .rail-tooltip {
-  background: #eefcff;
-  color: #12313f;
+  background: #f4f4f5;
+  color: #111111;
 }
 
 [data-theme='dark'] .update-bar {

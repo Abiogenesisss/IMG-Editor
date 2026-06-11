@@ -19,7 +19,6 @@ const api = {
   resolveOutputDir: (inputDir) => ipcRenderer.invoke('resolve-output-dir', inputDir),
   readImages: (folderPath) => ipcRenderer.invoke('read-images', folderPath),
   readImagesRecursive: (folderPath) => ipcRenderer.invoke('read-images-recursive', folderPath),
-  analyzeTrainingBuckets: (options) => ipcRenderer.invoke('analyze-training-buckets', options),
   createWorkflowRunDir: (baseDir, name) =>
     ipcRenderer.invoke('create-workflow-run-dir', baseDir, name),
   copyWorkflowFiles: (files, outputDir) =>

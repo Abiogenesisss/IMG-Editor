@@ -26,7 +26,6 @@ from tasks.cluster import (extract_style_batch, extract_semantic_batch,
 from tasks.split import three_stage_split_batch
 from tasks.augment import cutout_one, perspective_one, gaussian_blur_noise_one, preview_augment
 from tasks.tagger import list_models as tagger_list_models, download_model as tagger_download, tag_batch
-from tasks.upscale import upscale_one, preview_upscale, get_available_models as upscale_models, cleanup_cache as upscale_cleanup
 from tasks.caption import (caption_one, caption_batch_api, caption_batch_multi_api,
                            local_load_model, local_unload_model, local_model_status,
                            local_caption_one, local_caption_batch, cleanup_local_model)
@@ -40,6 +39,28 @@ from tasks.cluster import cleanup_cache as cluster_cleanup
 from tasks.gpu_config import set_gpu_enabled, gpu_status as get_gpu_status
 
 BACKEND_TOKEN = os.environ.get("IMG_EDITOR_BACKEND_TOKEN", "")
+_upscale_api = None
+
+
+def load_upscale_api():
+    """Import the heavy upscaler stack only when an upscale endpoint is used."""
+    global _upscale_api
+    if _upscale_api is None:
+        from tasks.upscale import (upscale_one, preview_upscale,
+                                   get_available_models, cleanup_cache)
+        _upscale_api = {
+            "upscale_one": upscale_one,
+            "preview_upscale": preview_upscale,
+            "get_available_models": get_available_models,
+            "cleanup_cache": cleanup_cache,
+        }
+    return _upscale_api
+
+
+def upscale_cleanup():
+    if _upscale_api is None:
+        return
+    return _upscale_api["cleanup_cache"]()
 
 
 def find_free_port():
@@ -529,6 +550,7 @@ class Handler(BaseHTTPRequestHandler):
         if not output_dir:
             return self._json({"success": False, "error": "no output directory specified"}, 400)
 
+        upscale_one = load_upscale_api()["upscale_one"]
         os.makedirs(output_dir, exist_ok=True)
         self._begin_sse()
 
@@ -564,12 +586,14 @@ class Handler(BaseHTTPRequestHandler):
         if not fpath:
             return self._json({"ok": False, "error": "no file"}, 400)
 
+        preview_upscale = load_upscale_api()["preview_upscale"]
         result = preview_upscale(fpath, scale, denoise, model,
                                  style=style, tta=tta)
         self._json(result)
 
     # ---- 超分辨率: 模型列表 ----
     def _upscale_models(self):
+        upscale_models = load_upscale_api()["get_available_models"]
         models = upscale_models()
         self._json({"success": True, "models": models})
 

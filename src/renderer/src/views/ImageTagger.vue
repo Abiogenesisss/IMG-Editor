@@ -1056,7 +1056,7 @@ const showTagPanel = ref(true)
   flex-shrink: 0;
 }
 .toggle-switch.on {
-  background: var(--color-active-bg);
+  background: var(--color-toggle-on);
 }
 .toggle-knob {
   position: absolute;
@@ -1065,7 +1065,7 @@ const showTagPanel = ref(true)
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--color-active-text);
+  background: var(--color-toggle-knob);
   box-shadow: 0 1px 3px var(--color-shadow);
   transition: transform 0.2s;
 }

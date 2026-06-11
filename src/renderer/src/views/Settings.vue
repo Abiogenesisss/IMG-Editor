@@ -69,7 +69,6 @@ const allMenuItems = [
   { path: '/upscale', label: '超分辨率', icon: 'upscale', required: false },
   { path: '/tagger', label: '图片打标', icon: 'tagger', required: false },
   { path: '/caption', label: 'Caption', icon: 'caption', required: false },
-  { path: '/buckets', label: '分桶分析', icon: 'buckets', required: false },
   { path: '/workflow', label: '工作流', icon: 'workflow', required: false },
   { path: '/tunnel', label: '隧道工具', icon: 'tunnel', required: false },
   { path: '/settings', label: '设置', icon: 'settings', required: true }
@@ -419,23 +418,6 @@ const previewUrl = computed(() => {
                 stroke-linejoin="round"
               >
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-              </svg>
-              <!-- 分桶分析 -->
-              <svg
-                v-else-if="item.icon === 'buckets'"
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-                <rect x="14" y="3" width="7" height="7" rx="1"></rect>
-                <rect x="3" y="14" width="7" height="7" rx="1"></rect>
-                <rect x="14" y="14" width="7" height="7" rx="1"></rect>
               </svg>
               <!-- 工作流 -->
               <Waypoints
@@ -990,7 +972,7 @@ const previewUrl = computed(() => {
   flex-shrink: 0;
 }
 .toggle-switch.on {
-  background: var(--color-active-bg);
+  background: var(--color-toggle-on);
 }
 .toggle-knob {
   position: absolute;
@@ -1304,7 +1286,7 @@ const previewUrl = computed(() => {
   transition: background 0.2s;
 }
 .config-toggle.on {
-  background: #7c3aed;
+  background: var(--color-toggle-on);
 }
 .config-toggle-knob {
   position: absolute;
@@ -1531,9 +1513,9 @@ const previewUrl = computed(() => {
 }
 
 .menu-card.active {
-  border-color: var(--color-info);
-  background: var(--color-info-light);
-  box-shadow: 0 0 0 1px var(--color-info);
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+  box-shadow: 0 0 0 1px var(--color-accent);
 }
 
 .menu-card.required {
@@ -1547,8 +1529,8 @@ const previewUrl = computed(() => {
 }
 
 .menu-card.required.active:hover {
-  border-color: var(--color-info);
-  background: var(--color-info-light);
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
 }
 
 .required-badge {
@@ -1571,7 +1553,7 @@ const previewUrl = computed(() => {
   height: 44px;
   border-radius: var(--radius-sm);
   background: var(--color-primary-light);
-  color: var(--color-info);
+  color: var(--color-accent-text);
   transition:
     background 0.2s,
     color 0.2s;
@@ -1605,8 +1587,8 @@ const previewUrl = computed(() => {
   border-color: #52525b;
 }
 [data-theme='dark'] .form-input:focus {
-  border-color: #818cf8;
-  box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.15);
+  border-color: var(--color-text);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
 [data-theme='dark'] .form-input::placeholder {
   color: #52525b;
@@ -1623,10 +1605,10 @@ const previewUrl = computed(() => {
   background: #3f3f46;
 }
 [data-theme='dark'] .toggle-switch.on {
-  background: #818cf8;
+  background: var(--color-toggle-on);
 }
 [data-theme='dark'] .config-toggle.on {
-  background: #8b5cf6;
+  background: var(--color-toggle-on);
 }
 
 /* 菜单卡片 - 暗色模式下激活态更醒目 */
@@ -1635,19 +1617,19 @@ const previewUrl = computed(() => {
   border-color: #3f3f46;
 }
 [data-theme='dark'] .menu-card:hover {
-  background: rgba(49, 46, 89, 0.4);
-  border-color: #6366f1;
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-hover);
 }
 [data-theme='dark'] .menu-card.active {
-  background: rgba(99, 102, 241, 0.12);
-  border-color: #818cf8;
+  background: var(--color-accent-light);
+  border-color: var(--color-accent);
   box-shadow:
-    0 0 0 1px rgba(129, 140, 248, 0.3),
-    0 0 12px rgba(99, 102, 241, 0.08);
+    0 0 0 1px var(--color-accent),
+    0 2px 10px rgba(0, 0, 0, 0.4);
 }
 [data-theme='dark'] .menu-card.active .menu-card-icon {
-  background: rgba(99, 102, 241, 0.2);
-  color: #a5b4fc;
+  background: rgba(244, 244, 245, 0.16);
+  color: var(--color-text);
 }
 [data-theme='dark'] .menu-card:not(.active) .menu-card-icon {
   background: rgba(63, 63, 70, 0.5);
@@ -1658,8 +1640,8 @@ const previewUrl = computed(() => {
   border-color: #3f3f46;
 }
 [data-theme='dark'] .menu-card.required.active:hover {
-  background: rgba(99, 102, 241, 0.12);
-  border-color: #818cf8;
+  background: var(--color-accent-light);
+  border-color: var(--color-accent);
 }
 
 /* 配置项卡片 - 暗色模式优化 */

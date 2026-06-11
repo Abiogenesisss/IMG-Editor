@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Cable, Clipboard, Play, Plus, RotateCcw, Square, Terminal, Trash2 } from 'lucide-vue-next'
 import { useLocalStorage } from '../composables/useLocalStorage'
 
@@ -15,11 +15,9 @@ function makeMapping(remotePort = '', localPort = remotePort) {
 }
 
 const sshCommand = useLocalStorage('tunnel-ssh-command', '')
-const mappings = useLocalStorage(
-  'tunnel-port-mappings',
-  [makeMapping('6006', '6006')],
-  { type: 'json' }
-)
+const mappings = useLocalStorage('tunnel-port-mappings', [makeMapping('6006', '6006')], {
+  type: 'json'
+})
 
 if (!Array.isArray(mappings.value) || mappings.value.length === 0) {
   mappings.value = [makeMapping('6006', '6006')]
@@ -50,11 +48,41 @@ const stateLabel = computed(() => {
 })
 
 const stateClass = computed(() => `state-${tunnelStatus.value.state || 'stopped'}`)
-const isBusy = computed(() => tunnelStatus.value.state === 'starting' || tunnelStatus.value.state === 'stopping')
-const isActive = computed(() => tunnelStatus.value.state === 'running' || tunnelStatus.value.state === 'starting')
+const isBusy = computed(
+  () => tunnelStatus.value.state === 'starting' || tunnelStatus.value.state === 'stopping'
+)
+const isActive = computed(
+  () => tunnelStatus.value.state === 'running' || tunnelStatus.value.state === 'starting'
+)
 const enabledMappings = computed(() => mappings.value.filter((row) => row.enabled !== false))
-const visibleMappings = computed(() => tunnelStatus.value.mappings?.length ? tunnelStatus.value.mappings : enabledMappings.value)
-const canStart = computed(() => sshCommand.value.trim() && enabledMappings.value.length > 0 && !isBusy.value)
+const visibleMappings = computed(() =>
+  tunnelStatus.value.mappings?.length ? tunnelStatus.value.mappings : enabledMappings.value
+)
+const portValidationError = computed(() => {
+  if (!enabledMappings.value.length) return '至少需要一条启用的端口映射'
+
+  const localPorts = new Set()
+  for (const [index, row] of enabledMappings.value.entries()) {
+    const remotePort = String(row.remotePort || '').trim()
+    const localPort = String(row.localPort || row.remotePort || '').trim()
+    const remoteError = validatePort(remotePort, `第 ${index + 1} 行云端端口`)
+    if (remoteError) return remoteError
+
+    const localError = validatePort(localPort, `第 ${index + 1} 行本地端口`)
+    if (localError) return localError
+
+    if (localPorts.has(localPort)) return `本地端口 ${localPort} 被重复使用`
+    localPorts.add(localPort)
+  }
+
+  return ''
+})
+const visibleError = computed(
+  () => actionError.value || tunnelStatus.value.error || portValidationError.value
+)
+const canStart = computed(
+  () => sshCommand.value.trim() && !portValidationError.value && !isBusy.value
+)
 const logs = computed(() => tunnelStatus.value.logs || [])
 
 let removeTunnelListener = null
@@ -65,6 +93,13 @@ function syncStatus(status) {
 
 function errorMessage(err, fallback) {
   return err?.message || String(err || '') || fallback
+}
+
+function validatePort(value, label) {
+  if (!/^\d+$/.test(value)) return `${label} 必须是 1-65535 的端口号`
+  const port = Number(value)
+  if (port < 1 || port > 65535) return `${label} 必须是 1-65535 的端口号`
+  return ''
 }
 
 function getStartPayload() {
@@ -142,6 +177,7 @@ function importConfig() {
 async function start() {
   actionError.value = ''
   copiedPort.value = ''
+  if (portValidationError.value) return
   try {
     const result = await window.api.startTunnel(getStartPayload())
     syncStatus(result)
@@ -184,6 +220,14 @@ onMounted(() => {
   })
 })
 
+watch(
+  [sshCommand, mappings],
+  () => {
+    actionError.value = ''
+  },
+  { deep: true }
+)
+
 onBeforeUnmount(() => {
   if (removeTunnelListener) removeTunnelListener()
 })
@@ -202,7 +246,13 @@ onBeforeUnmount(() => {
           <RotateCcw :size="15" />
           刷新
         </button>
-        <button v-if="!isActive" class="action-btn primary" type="button" :disabled="!canStart" @click="start">
+        <button
+          v-if="!isActive"
+          class="action-btn primary"
+          type="button"
+          :disabled="!canStart"
+          @click="start"
+        >
           <Play :size="15" />
           启动代理
         </button>
@@ -255,7 +305,12 @@ onBeforeUnmount(() => {
           ></textarea>
         </label>
 
-        <button class="secondary-btn" type="button" :disabled="isActive || !configText.trim()" @click="importConfig">
+        <button
+          class="secondary-btn"
+          type="button"
+          :disabled="isActive || !configText.trim()"
+          @click="importConfig"
+        >
           从文本填入
         </button>
       </section>
@@ -266,7 +321,13 @@ onBeforeUnmount(() => {
             <Cable :size="16" />
             <span>端口映射</span>
           </div>
-          <button class="icon-btn" type="button" title="新增端口" :disabled="isActive" @click="addMapping">
+          <button
+            class="icon-btn"
+            type="button"
+            title="新增端口"
+            :disabled="isActive"
+            @click="addMapping"
+          >
             <Plus :size="15" />
           </button>
         </div>
@@ -298,13 +359,24 @@ onBeforeUnmount(() => {
               :disabled="isActive || row.enabled === false"
               placeholder="6006"
             />
-            <button class="icon-btn danger-text" type="button" title="删除" :disabled="isActive" @click="removeMapping(row.id)">
+            <button
+              class="icon-btn danger-text"
+              type="button"
+              title="删除"
+              :disabled="isActive"
+              @click="removeMapping(row.id)"
+            >
               <Trash2 :size="14" />
             </button>
           </div>
         </div>
 
-        <button class="secondary-btn compact" type="button" :disabled="isActive" @click="resetMappings">
+        <button
+          class="secondary-btn compact"
+          type="button"
+          :disabled="isActive"
+          @click="resetMappings"
+        >
           重置端口
         </button>
       </section>
@@ -315,8 +387,8 @@ onBeforeUnmount(() => {
           <span>{{ stateLabel }}</span>
         </div>
 
-        <div v-if="actionError || tunnelStatus.error" class="error-strip">
-          {{ actionError || tunnelStatus.error }}
+        <div v-if="visibleError" class="error-strip">
+          {{ visibleError }}
         </div>
 
         <div class="mapped-list">
@@ -325,7 +397,12 @@ onBeforeUnmount(() => {
             <span class="mapped-port">127.0.0.1:{{ row.localPort }}</span>
             <span class="mapped-arrow">→</span>
             <span class="mapped-remote">云端 {{ row.remotePort }}</span>
-            <button class="icon-btn" type="button" title="复制本地地址" @click="copyLocalUrl(row.localPort)">
+            <button
+              class="icon-btn"
+              type="button"
+              title="复制本地地址"
+              @click="copyLocalUrl(row.localPort)"
+            >
               <Clipboard :size="14" />
             </button>
           </div>

@@ -1093,9 +1093,9 @@ const showSettings = ref(true)
   cursor: default;
 }
 
-/* accent 颜色变体 toggle */
+/* accent 颜色变体 toggle —— 与普通开关一致用 emerald 点缀 */
 .toggle-switch.accent.on {
-  background: var(--color-accent);
+  background: var(--color-toggle-on);
 }
 
 .sp-config-info {

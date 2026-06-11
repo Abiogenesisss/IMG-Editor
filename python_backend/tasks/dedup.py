@@ -7,11 +7,23 @@ from tasks.gpu_config import is_gpu_enabled, gpu_status as get_gpu_status
 
 Image.MAX_IMAGE_PIXELS = None
 
+QUALITY_REVIEW_GAP = 6.0
 
-def _load_image(filepath, max_size=2048):
+
+def _load_image(filepath, max_size=2048, return_meta=False):
     """安全加载图片（支持大图 & 中文路径 & WebP），返回 BGR numpy 数组。
     用 Pillow 解码，绕过 OpenCV 对超大 PNG chunk 的限制。"""
+    import os
+
     with Image.open(filepath) as img:
+        meta = {
+            "width": img.width,
+            "height": img.height,
+            "format": (img.format or "").lower(),
+            "mode": img.mode,
+            "has_alpha": img.mode in ("RGBA", "LA", "PA") or "transparency" in img.info,
+            "file_size": os.path.getsize(filepath) if os.path.exists(filepath) else 0,
+        }
         if max(img.size) > max_size:
             img.thumbnail((max_size, max_size), Image.LANCZOS)
         # 含透明通道时在白底上合成，避免透明区变黑污染哈希特征
@@ -22,7 +34,87 @@ def _load_image(filepath, max_size=2048):
         elif img.mode != 'RGB':
             img = img.convert('RGB')
         arr = np.array(img)
-    return arr[:, :, ::-1].copy()
+    arr = arr[:, :, ::-1].copy()
+    if return_meta:
+        return arr, meta
+    return arr
+
+
+def _clamp01(value):
+    return max(0.0, min(1.0, float(value)))
+
+
+def _compute_quality_features(filepath, gray, meta):
+    """给去重组内排序使用的轻量质量特征。
+    分数只用于同一重复组内比较，偏向保留高分辨率、清晰、低压缩损失的版本。"""
+    import cv2
+
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    area = max(width * height, 1)
+    file_size = int(meta.get("file_size") or 0)
+    bytes_per_pixel = file_size / area
+
+    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    contrast = float(gray.std())
+    fmt = (meta.get("format") or "").lower()
+    format_score = {
+        "png": 1.0,
+        "webp": 0.94,
+        "tiff": 0.9,
+        "tif": 0.9,
+        "jpeg": 0.84,
+        "jpg": 0.84,
+        "bmp": 0.8,
+    }.get(fmt, 0.76)
+
+    area_part = _clamp01(np.log1p(area) / np.log1p(4096 * 4096)) * 38
+    sharpness_part = _clamp01(np.log1p(sharpness) / np.log1p(1200)) * 30
+    contrast_part = _clamp01(contrast / 80) * 12
+    compression_part = _clamp01(bytes_per_pixel / 0.8) * 10
+    format_part = format_score * 8
+    alpha_part = 2 if meta.get("has_alpha") else 0
+    score = area_part + sharpness_part + contrast_part + compression_part + format_part + alpha_part
+
+    return {
+        "score": round(float(score), 1),
+        "width": width,
+        "height": height,
+        "area": area,
+        "sharpness": round(sharpness, 1),
+        "contrast": round(contrast, 1),
+        "bytes_per_pixel": round(bytes_per_pixel, 3),
+        "format": fmt,
+        "has_alpha": bool(meta.get("has_alpha")),
+        "file_size": file_size,
+    }
+
+
+def _quality_sort_key(feature_result):
+    q = feature_result.get("quality") or {}
+    return (
+        q.get("score") or 0,
+        q.get("area") or 0,
+        q.get("sharpness") or 0,
+        q.get("bytes_per_pixel") or 0,
+        q.get("file_size") or 0,
+    )
+
+
+def _quality_reason(current, best):
+    if not current or not best:
+        return "质量信息不足"
+    if (best.get("area") or 0) > (current.get("area") or 0) * 1.08:
+        return "分辨率较低"
+    if (best.get("sharpness") or 0) > (current.get("sharpness") or 0) * 1.18:
+        return "清晰度较低"
+    if (best.get("bytes_per_pixel") or 0) > (current.get("bytes_per_pixel") or 0) * 1.25:
+        return "压缩质量较低"
+    if best.get("has_alpha") and not current.get("has_alpha"):
+        return "缺少透明信息"
+    if (best.get("format") or "") != (current.get("format") or ""):
+        return "格式优先级较低"
+    return "综合质量较低"
 
 
 def _crop_to_content(img_bgr):
@@ -153,12 +245,13 @@ def extract_perceptual_batch(files, max_kp=1000, progress_cb=None):
 
     for i, f in enumerate(files):
         try:
-            img = _load_image(f)
+            img, quality_meta = _load_image(f, return_meta=True)
             if img is None:
                 raise ValueError("无法读取图片")
             # 裁剪大面积留白，避免画册跨页等排版留白污染哈希
             img = _crop_to_content(img)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            quality = _compute_quality_features(f, gray, quality_meta)
 
             # dHash + pHash
             dhash = _compute_dhash(gray)
@@ -186,6 +279,7 @@ def extract_perceptual_batch(files, max_kp=1000, progress_cb=None):
                 "orb_des": des,
                 "orb_kp": kp_pts,
                 "orb_hw": gray.shape[:2],  # ORB 处理时的图像尺寸 (h, w)
+                "quality": quality,
             }
         except Exception as e:
             results[i] = {"file": f, "ok": False, "error": str(e)}
@@ -528,12 +622,52 @@ def find_duplicates_perceptual(feature_results, hash_thresh=10, orb_min_inliers=
             group_id += 1
             remaining = [m for m in remaining if m not in set(sub)]
 
+    quality_actions = {}
+    groups = defaultdict(list)
+    for idx, gid in index_to_group.items():
+        if gid is not None:
+            groups[gid].append(idx)
+
+    for members in groups.values():
+        if not members:
+            continue
+        ranked = sorted(members, key=lambda idx: _quality_sort_key(valid[idx]), reverse=True)
+        best_idx = ranked[0]
+        best_quality = valid[best_idx].get("quality") or {}
+        best_score = float(best_quality.get("score") or 0)
+        for idx in members:
+            current_quality = valid[idx].get("quality") or {}
+            current_score = float(current_quality.get("score") or 0)
+            if idx == best_idx:
+                action = "keep"
+                reason = "组内质量最高"
+            elif best_score - current_score >= QUALITY_REVIEW_GAP:
+                action = "remove"
+                reason = _quality_reason(current_quality, best_quality)
+            else:
+                action = "review"
+                reason = "质量差距较小，建议人工确认"
+            quality_actions[idx] = {
+                "action": action,
+                "reason": reason,
+                "score": round(current_score, 1),
+            }
+
     # ---- 构建分组结果 ----
     result = []
     for i, r in enumerate(valid):
         gid = index_to_group.get(i)
         similarity = round(float(max_sim[i]) * 100, 1) if gid is not None else None
-        result.append({"file": r["file"], "group": gid, "similarity": similarity})
+        quality = r.get("quality") or {}
+        quality_action = quality_actions.get(i, {})
+        result.append({
+            "file": r["file"],
+            "group": gid,
+            "similarity": similarity,
+            "quality_score": quality_action.get("score", quality.get("score")),
+            "quality_action": quality_action.get("action"),
+            "quality_reason": quality_action.get("reason"),
+        })
 
     if return_debug:
         return result, debug_info

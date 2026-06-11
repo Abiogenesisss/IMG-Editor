@@ -1,9 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { spawn, spawnSync } from 'child_process'
-import { chmodSync, unlinkSync, writeFileSync } from 'fs'
 import net from 'net'
-import { tmpdir } from 'os'
-import { join } from 'path'
 import { Client as SshClient } from 'ssh2'
 
 const TUNNEL_LOG_LIMIT = 160
@@ -31,11 +27,8 @@ const SSH_OPTIONS_WITH_VALUE = new Set([
   '-w'
 ])
 
-let tunnelProcess = null
 let tunnelClient = null
-let tunnelReadyTimer = null
 let tunnelStopping = false
-let tunnelAskpassPath = ''
 let tunnelServers = []
 const tunnelSockets = new Set()
 const tunnelStreams = new Set()
@@ -48,177 +41,6 @@ let tunnelState = {
   command: '',
   mappings: [],
   error: ''
-}
-
-function isProcessRunning(child) {
-  return Boolean(child && child.exitCode === null && child.signalCode === null)
-}
-
-function waitForProcessExit(child, timeoutMs) {
-  if (!isProcessRunning(child)) return Promise.resolve(true)
-
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (result) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      child.off('exit', onExit)
-      child.off('error', onExit)
-      resolve(result)
-    }
-    const onExit = () => finish(true)
-    const timer = setTimeout(() => finish(false), timeoutMs)
-    child.once('exit', onExit)
-    child.once('error', onExit)
-  })
-}
-
-function terminateProcess(child) {
-  if (!isProcessRunning(child)) return
-
-  try {
-    if (process.platform === 'win32') {
-      child.kill()
-    } else {
-      process.kill(-child.pid, 'SIGTERM')
-    }
-  } catch {
-    try {
-      child.kill()
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-function cleanupAskpassHelper() {
-  if (!tunnelAskpassPath) return
-  const helperPath = tunnelAskpassPath
-  tunnelAskpassPath = ''
-  try {
-    unlinkSync(helperPath)
-  } catch {
-    /* ignore */
-  }
-}
-
-function makeAskpassEnv(password) {
-  if (!password) return {}
-
-  cleanupAskpassHelper()
-  const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-
-  if (process.platform === 'win32') {
-    tunnelAskpassPath = join(tmpdir(), `img-editor-ssh-askpass-${suffix}.cmd`)
-    writeFileSync(tunnelAskpassPath, '@echo off\r\n<nul set /p "=%IMG_EDITOR_SSH_PASSWORD%"\r\n', {
-      mode: 0o700
-    })
-  } else {
-    tunnelAskpassPath = join(tmpdir(), `img-editor-ssh-askpass-${suffix}.sh`)
-    writeFileSync(tunnelAskpassPath, '#!/bin/sh\nprintf "%s" "$IMG_EDITOR_SSH_PASSWORD"\n', {
-      mode: 0o700
-    })
-    chmodSync(tunnelAskpassPath, 0o700)
-  }
-
-  return {
-    SSH_ASKPASS: tunnelAskpassPath,
-    SSH_ASKPASS_REQUIRE: 'force',
-    DISPLAY: process.env.DISPLAY || 'img-editor',
-    IMG_EDITOR_SSH_PASSWORD: password
-  }
-}
-
-function canConnectLocalPort(port) {
-  return new Promise((resolve) => {
-    const socket = net.createConnection({
-      host: '127.0.0.1',
-      port: Number(port)
-    })
-    let settled = false
-    const finish = (ok) => {
-      if (settled) return
-      settled = true
-      socket.destroy()
-      resolve(ok)
-    }
-    socket.setTimeout(350)
-    socket.once('connect', () => finish(true))
-    socket.once('timeout', () => finish(false))
-    socket.once('error', () => finish(false))
-  })
-}
-
-async function areLocalForwardsReady(mappings) {
-  for (const mapping of mappings) {
-    const ok = await canConnectLocalPort(mapping.localPort)
-    if (!ok) return false
-  }
-  return true
-}
-
-function scheduleTunnelReadyCheck(child, mappings) {
-  const started = Date.now()
-  const timeoutMs = 12000
-
-  const check = async () => {
-    if (tunnelProcess !== child || !isProcessRunning(child)) return
-
-    if (await areLocalForwardsReady(mappings)) {
-      cleanupAskpassHelper()
-      setTunnelState({ state: 'running', pid: child.pid, error: '' })
-      appendTunnelLog('success', '隧道已运行')
-      return
-    }
-
-    if (Date.now() - started < timeoutMs) {
-      tunnelReadyTimer = setTimeout(check, 400)
-      return
-    }
-
-    const ports = mappings.map((item) => `127.0.0.1:${item.localPort}`).join('、')
-    const message = `SSH 进程已启动，但本地端口未监听：${ports}。通常是密码认证卡住、密码错误，或 ssh 未能建立端口转发。`
-    setTunnelState({
-      state: 'error',
-      pid: null,
-      stoppedAt: new Date().toISOString(),
-      error: message
-    })
-    appendTunnelLog('error', message)
-    forceKillProcessTree(child)
-    if (tunnelProcess === child) tunnelProcess = null
-    cleanupAskpassHelper()
-  }
-
-  clearTimeout(tunnelReadyTimer)
-  tunnelReadyTimer = setTimeout(check, 250)
-}
-
-function forceKillProcessTree(child = tunnelProcess) {
-  if (!isProcessRunning(child) || !child.pid) return
-
-  try {
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-        stdio: 'ignore',
-        windowsHide: true,
-        timeout: 3000
-      })
-    } else {
-      try {
-        process.kill(-child.pid, 'SIGKILL')
-      } catch {
-        child.kill('SIGKILL')
-      }
-    }
-  } catch {
-    try {
-      child.kill('SIGKILL')
-    } catch {
-      /* ignore */
-    }
-  }
 }
 
 function closeForwardResources() {
@@ -333,6 +155,44 @@ function normalizeTunnelMappings(input) {
   return mappings
 }
 
+function canListenLocalPort(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer()
+    let settled = false
+
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      server.removeAllListeners('error')
+      if (server.listening) {
+        server.close(() => resolve(result))
+      } else {
+        resolve(result)
+      }
+    }
+
+    server.once('error', (err) => finish({ ok: false, error: err }))
+    server.listen(Number(port), '127.0.0.1', () => finish({ ok: true }))
+  })
+}
+
+function formatLocalPortError(mapping, err) {
+  if (err?.code === 'EADDRINUSE') {
+    return `本地端口 ${mapping.localPort} 已被占用，请换一个本地端口或先关闭占用程序`
+  }
+  if (err?.code === 'EACCES') {
+    return `本地端口 ${mapping.localPort} 没有监听权限，请换一个本地端口`
+  }
+  return `本地端口 ${mapping.localPort} 无法监听：${err?.message || '未知错误'}`
+}
+
+async function assertLocalPortsAvailable(mappings) {
+  for (const mapping of mappings) {
+    const result = await canListenLocalPort(mapping.localPort)
+    if (!result.ok) throw new Error(formatLocalPortError(mapping, result.error))
+  }
+}
+
 function extractSshCommand(raw) {
   const text = String(raw || '').trim()
   if (!text) throw new Error('请填写 SSH 登录指令')
@@ -406,74 +266,13 @@ function sshOptionConsumesValue(token) {
   return false
 }
 
-function buildTunnelCommand(config = {}) {
+function buildSshConnectionConfig(config = {}) {
   const mappings = normalizeTunnelMappings(config.mappings)
   const tokens = tokenizeCommand(extractSshCommand(config.command))
   if (!tokens.length || !isSshCommand(tokens[0])) {
     throw new Error('SSH 指令必须以 ssh 或 ssh.exe 开头')
   }
 
-  const ssh = tokens[0]
-  const args = tokens.slice(1)
-  const sshOptions = []
-  const trailing = []
-  let destination = ''
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]
-    if (arg.startsWith('-')) {
-      sshOptions.push(arg)
-      if (sshOptionConsumesValue(arg) && i + 1 < args.length) {
-        sshOptions.push(args[i + 1])
-        i += 1
-      }
-      continue
-    }
-
-    if (!destination) destination = arg
-    else trailing.push(arg)
-  }
-
-  if (!destination) throw new Error('SSH 指令里缺少 user@host')
-  if (trailing.length) throw new Error('SSH 指令只保留登录部分，不要追加远端命令')
-
-  const forwardArgs = []
-  for (const mapping of mappings) {
-    forwardArgs.push('-L', `${mapping.localPort}:127.0.0.1:${mapping.remotePort}`)
-  }
-
-  return {
-    command: ssh,
-    args: [
-      ...sshOptions,
-      '-N',
-      '-T',
-      '-o',
-      'BatchMode=no',
-      '-o',
-      'NumberOfPasswordPrompts=1',
-      '-o',
-      'ExitOnForwardFailure=yes',
-      '-o',
-      'ServerAliveInterval=30',
-      '-o',
-      'ServerAliveCountMax=3',
-      '-o',
-      'StrictHostKeyChecking=accept-new',
-      ...forwardArgs,
-      destination
-    ],
-    mappings
-  }
-}
-
-function commandPreview(command, args) {
-  return [command, ...args.map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg))].join(' ')
-}
-
-function buildSshConnectionConfig(config = {}) {
-  const { command, args, mappings } = buildTunnelCommand(config)
-  const tokens = tokenizeCommand(extractSshCommand(config.command))
   const rawArgs = tokens.slice(1)
   let port = 22
   let username = ''
@@ -504,6 +303,7 @@ function buildSshConnectionConfig(config = {}) {
       continue
     }
     if (!destination) destination = arg
+    else throw new Error('SSH 指令只保留登录部分，不要追加远端命令')
   }
 
   const atIndex = destination.lastIndexOf('@')
@@ -513,20 +313,20 @@ function buildSshConnectionConfig(config = {}) {
   if (!host || !username) throw new Error('SSH 指令需要包含 user@host')
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('SSH 端口必须是 1-65535')
 
+  const ssh = {
+    host,
+    port,
+    username,
+    password: String(config.password || ''),
+    readyTimeout: 12000,
+    keepaliveInterval: 30000,
+    keepaliveCountMax: 3
+  }
+
   return {
-    command,
-    args,
-    preview: commandPreview(command, args),
+    preview: `${ssh.username}@${ssh.host}:${ssh.port}`,
     mappings,
-    ssh: {
-      host,
-      port,
-      username,
-      password: String(config.password || ''),
-      readyTimeout: 12000,
-      keepaliveInterval: 30000,
-      keepaliveCountMax: 3
-    }
+    ssh
   }
 }
 
@@ -554,7 +354,10 @@ function listenForwardServer(client, mapping) {
           tunnelStreams.add(stream)
           stream.once('close', () => tunnelStreams.delete(stream))
           stream.once('error', (streamErr) => {
-            appendTunnelLog('error', `转发流错误 ${mapping.localPort}->${mapping.remotePort}：${streamErr.message}`)
+            appendTunnelLog(
+              'error',
+              `转发流错误 ${mapping.localPort}->${mapping.remotePort}：${streamErr.message}`
+            )
           })
           socket.pipe(stream)
           stream.pipe(socket)
@@ -562,11 +365,15 @@ function listenForwardServer(client, mapping) {
       )
     })
 
-    server.once('error', reject)
+    const onListenError = (err) => reject(new Error(formatLocalPortError(mapping, err)))
+    server.once('error', onListenError)
     server.listen(Number(mapping.localPort), '127.0.0.1', () => {
-      server.off('error', reject)
+      server.off('error', onListenError)
       tunnelServers.push({ server, mapping })
-      appendTunnelLog('success', `本地端口已监听：127.0.0.1:${mapping.localPort} -> 云端 ${mapping.remotePort}`)
+      appendTunnelLog(
+        'success',
+        `本地端口已监听：127.0.0.1:${mapping.localPort} -> 云端 ${mapping.remotePort}`
+      )
       resolve()
     })
   })
@@ -575,33 +382,6 @@ function listenForwardServer(client, mapping) {
 async function openForwardServers(client, mappings) {
   for (const mapping of mappings) {
     await listenForwardServer(client, mapping)
-  }
-}
-
-function handleTunnelOutput(child, source, data, password) {
-  const text = data.toString()
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-  for (const line of lines) appendTunnelLog(source, line)
-
-  if (/are you sure you want to continue connecting/i.test(text)) {
-    try {
-      if (child.stdin?.writable) child.stdin.write('yes\n')
-      appendTunnelLog('info', '已确认新的 SSH 主机指纹')
-    } catch {
-      /* ignore */
-    }
-  }
-
-  if (password && /(password|passphrase).*:\s*$/i.test(text)) {
-    try {
-      if (child.stdin?.writable) child.stdin.write(`${password}\n`)
-      appendTunnelLog('info', '已发送 SSH 密码')
-    } catch {
-      /* ignore */
-    }
   }
 }
 
@@ -638,10 +418,7 @@ export function registerTunnelIPC(ipcMain) {
 }
 
 export async function stopTunnel() {
-  const child = tunnelProcess
-  clearTimeout(tunnelReadyTimer)
-  cleanupAskpassHelper()
-  if (!child && !tunnelClient && tunnelServers.length === 0) {
+  if (!tunnelClient && tunnelServers.length === 0) {
     setTunnelState({
       state: 'stopped',
       pid: null,
@@ -665,16 +442,6 @@ export async function stopTunnel() {
     tunnelClient = null
   }
 
-  if (child) {
-    terminateProcess(child)
-    const exited = await waitForProcessExit(child, 1800)
-    if (!exited) {
-      forceKillProcessTree(child)
-      await waitForProcessExit(child, 1000)
-    }
-  }
-
-  if (tunnelProcess === child) tunnelProcess = null
   tunnelStopping = false
   setTunnelState({
     state: 'stopped',
@@ -687,11 +454,12 @@ export async function stopTunnel() {
 }
 
 export async function startTunnel(config = {}) {
-  if ((tunnelProcess && isProcessRunning(tunnelProcess)) || tunnelClient || tunnelServers.length) {
+  if (tunnelClient || tunnelServers.length) {
     await stopTunnel()
   }
 
   const { preview, mappings, ssh } = buildSshConnectionConfig(config)
+  await assertLocalPortsAvailable(mappings)
   const startedAt = new Date().toISOString()
 
   tunnelLogs.length = 0
@@ -769,8 +537,6 @@ export async function startTunnel(config = {}) {
 }
 
 export function forceStopTunnel() {
-  clearTimeout(tunnelReadyTimer)
-  cleanupAskpassHelper()
   closeForwardResources()
   if (tunnelClient) {
     try {
@@ -780,7 +546,5 @@ export function forceStopTunnel() {
     }
   }
   tunnelClient = null
-  if (tunnelProcess) forceKillProcessTree(tunnelProcess)
-  tunnelProcess = null
   tunnelStopping = false
 }

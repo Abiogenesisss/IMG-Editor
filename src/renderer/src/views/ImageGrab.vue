@@ -1139,50 +1139,49 @@ function openExternal(item) {
 }
 
 .site-tab-btn {
+  --site-tab-accent: #0f1419;
   width: var(--ui-nav-button-width);
   height: var(--ui-nav-button-height);
   padding: 0 10px;
-  border: 1px solid var(--color-border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
+  background: #72e0d5;
+  color: #4f5578;
   font-size: 13px;
+  font-weight: 700;
   cursor: pointer;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    filter 0.16s ease;
+}
+
+.site-tab-btn.tab-pixiv {
+  --site-tab-accent: #0096fa;
+}
+
+.site-tab-btn.tab-booru {
+  --site-tab-accent: #ee8b2c;
+}
+
+.site-tab-btn.tab-generic {
+  --site-tab-accent: #8b5cf6;
 }
 
 .site-tab-btn:hover:not(:disabled) {
-  border-color: var(--color-border-hover);
-  background: var(--color-surface-hover);
-  color: var(--color-text);
+  border-color: var(--site-tab-accent);
+  background: var(--site-tab-accent);
+  color: #ffffff;
 }
 
 .site-tab-btn.active {
-  border-color: var(--color-active-bg);
-  background: var(--color-active-bg);
-  color: var(--color-active-text);
-}
-
-.site-tab-btn.tab-twitter.active {
-  border-color: #0f1419;
-  background: #0f1419;
+  border-color: var(--site-tab-accent);
+  background: var(--site-tab-accent);
   color: #ffffff;
 }
 
-/* Pixiv 品牌蓝 */
-.site-tab-btn.tab-pixiv.active {
-  border-color: #0096fa;
-  background: #0096fa;
-  color: #ffffff;
-}
-
-/* Booru 暖橙 */
-.site-tab-btn.tab-booru.active {
-  border-color: #ee8b2c;
-  background: #ee8b2c;
-  color: #ffffff;
-}
-
-/* 通用工具 - 流光渐变 */
+.site-tab-btn.tab-generic:hover:not(:disabled),
 .site-tab-btn.tab-generic.active {
   position: relative;
   border-color: transparent;

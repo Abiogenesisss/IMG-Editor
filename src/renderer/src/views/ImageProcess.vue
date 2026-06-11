@@ -48,6 +48,7 @@ const ACTION_LABELS = {
   alpha: '透明通道转换',
   crop: '比例裁剪',
   dedup: '去重',
+  dedupClean: '移除低质重复图',
   cluster: '聚类',
   clusterMove: '整理聚类结果'
 }
@@ -228,7 +229,7 @@ function runProportionalCrop() {
 const dedupHashThresh = ref(10)
 const dedupPhashThresh = ref(10)
 const dedupColorThresh = ref(0.5)
-const dedupMap = ref(new Map()) // file path → { group, similarity }
+const dedupMap = ref(new Map()) // file path → { group, similarity, qualityAction, qualityScore, qualityReason }
 const dedupActive = ref(false)
 
 const GROUP_COLORS = [
@@ -278,6 +279,41 @@ function getGroupInfo(img) {
     if (group != null) return { group, label: `组${group + 1}` }
   }
   return null
+}
+
+const dedupRemoveCandidates = computed(() => {
+  if (!dedupActive.value) return []
+  const existingPaths = new Set(images.value.map((img) => img.path))
+  return [...dedupMap.value.entries()]
+    .filter(
+      ([file, info]) =>
+        existingPaths.has(file) && info?.group != null && info.qualityAction === 'remove'
+    )
+    .map(([file, info]) => ({ file, info }))
+})
+
+const dedupReviewCount = computed(() => {
+  if (!dedupActive.value) return 0
+  const existingPaths = new Set(images.value.map((img) => img.path))
+  return [...dedupMap.value.entries()].filter(
+    ([file, info]) => existingPaths.has(file) && info?.qualityAction === 'review'
+  ).length
+})
+
+function getDedupQualityInfo(img) {
+  if (!dedupActive.value) return null
+  const info = dedupMap.value.get(img.path)
+  if (!info?.qualityAction) return null
+  const labels = {
+    keep: '保留',
+    remove: '低质',
+    review: '待确认'
+  }
+  return {
+    action: info.qualityAction,
+    label: labels[info.qualityAction] || '',
+    title: `${info.qualityReason || '质量建议'}${info.qualityScore != null ? `，评分 ${info.qualityScore}` : ''}`
+  }
 }
 
 // 排序后的图片列表：过滤/去重/聚类时按分组排列
@@ -337,7 +373,13 @@ async function deduplicate() {
     if (result.success) {
       const map = new Map()
       for (const item of result.results) {
-        map.set(item.file, { group: item.group, similarity: item.similarity })
+        map.set(item.file, {
+          group: item.group,
+          similarity: item.similarity,
+          qualityAction: item.quality_action,
+          qualityScore: item.quality_score,
+          qualityReason: item.quality_reason
+        })
       }
       dedupMap.value = map
       dedupActive.value = true
@@ -348,6 +390,58 @@ async function deduplicate() {
     setProcessError(err, 'dedup')
   } finally {
     if (processingAction.value === 'dedup') processingAction.value = null
+  }
+}
+
+async function removeLowQualityDuplicates() {
+  processError.value = ''
+  const targets = dedupRemoveCandidates.value
+  if (targets.length === 0) return
+
+  const groupCount = new Set(targets.map(({ info }) => info.group)).size
+  const reviewHint =
+    dedupReviewCount.value > 0
+      ? `\n另有 ${dedupReviewCount.value} 张质量差距较小，已保留待确认。`
+      : ''
+  const confirmed = window.confirm(
+    `将从 ${groupCount} 个重复组中移除 ${targets.length} 张低质重复图，移动到同目录的 del 文件夹。${reviewHint}\n文件不会被永久删除，是否继续？`
+  )
+  if (!confirmed) return
+
+  const paths = targets.map(({ file }) => file)
+  processingAction.value = 'dedupClean'
+  try {
+    const results = await Promise.all(paths.map((p) => window.api.deleteImage(p)))
+    const removedPaths = new Set()
+    results.forEach((result, index) => {
+      if (result?.success) removedPaths.add(paths[index])
+    })
+
+    if (removedPaths.size > 0) {
+      images.value = images.value.filter((img) => !removedPaths.has(img.path))
+      selectedImages.value = new Set(
+        [...selectedImages.value].filter((path) => !removedPaths.has(path))
+      )
+      selectAll.value = selectedImages.value.size === images.value.length && images.value.length > 0
+      for (const path of removedPaths) {
+        delete thumbnails[path]
+      }
+
+      const nextMap = new Map(dedupMap.value)
+      for (const path of removedPaths) {
+        nextMap.delete(path)
+      }
+      dedupMap.value = nextMap
+    }
+
+    const failed = paths.length - removedPaths.size
+    if (failed > 0) {
+      processError.value = `已移入 del ${removedPaths.size} 张，失败 ${failed} 张`
+    }
+  } catch (err) {
+    setProcessError(err, 'dedupClean')
+  } finally {
+    if (processingAction.value === 'dedupClean') processingAction.value = null
   }
 }
 
@@ -766,6 +860,15 @@ function clearProcessFolder() {
     >
       <template #tail>
         <button
+          v-if="dedupRemoveCandidates.length > 0"
+          class="action-btn dedup-clean-btn"
+          :disabled="!!processingAction"
+          :title="`预计移入 del ${dedupRemoveCandidates.length} 张低质重复图`"
+          @click="removeLowQualityDuplicates"
+        >
+          移除低质重复图
+        </button>
+        <button
           v-if="clusterActive"
           class="action-btn"
           :disabled="!!processingAction"
@@ -782,7 +885,13 @@ function clearProcessFolder() {
         v-for="img in sortedImages"
         :key="img.path"
         :data-path="img.path"
-        :class="['image-card', { selected: isSelected(img) }]"
+        :class="[
+          'image-card',
+          {
+            selected: isSelected(img),
+            'dedup-remove-card': getDedupQualityInfo(img)?.action === 'remove'
+          }
+        ]"
         :style="getGroupInfo(img) ? { borderColor: getGroupColor(getGroupInfo(img).group) } : {}"
         @click="openPreview(img)"
       >
@@ -794,6 +903,13 @@ function clearProcessFolder() {
         />
         <div v-else class="image-placeholder"></div>
         <div class="image-name-overlay">{{ img.name }}</div>
+        <span
+          v-if="getDedupQualityInfo(img)"
+          :class="['quality-badge', `quality-badge--${getDedupQualityInfo(img).action}`]"
+          :title="getDedupQualityInfo(img).title"
+        >
+          {{ getDedupQualityInfo(img).label }}
+        </span>
         <!-- 分组徽章（去重 / 聚类） -->
         <span
           v-if="getGroupInfo(img)"
@@ -929,6 +1045,14 @@ function clearProcessFolder() {
   font-weight: 500;
 }
 
+.dedup-clean-btn {
+  width: 136px;
+}
+
+.image-card.dedup-remove-card {
+  box-shadow: inset 0 0 0 2px rgba(220, 38, 38, 0.55);
+}
+
 /* 去重徽章 */
 .dedup-badge {
   position: absolute;
@@ -942,5 +1066,31 @@ function clearProcessFolder() {
   z-index: 2;
   pointer-events: none;
   line-height: 1.3;
+}
+
+.quality-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #fff;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.quality-badge--keep {
+  background: rgba(16, 185, 129, 0.92);
+}
+
+.quality-badge--remove {
+  background: rgba(220, 38, 38, 0.94);
+}
+
+.quality-badge--review {
+  background: rgba(245, 158, 11, 0.94);
 }
 </style>

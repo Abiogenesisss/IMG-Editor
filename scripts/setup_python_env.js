@@ -115,11 +115,11 @@ async function main() {
 
   // 5. 安装依赖
   console.log('[4/4] 安装 Python 依赖（这可能需要几分钟）...')
-  const requirementsPath = join(BACKEND_DIR, 'requirements.txt')
-  execSync(
-    `"${pipExe}" install --no-cache-dir -r "${requirementsPath}" --extra-index-url https://download.pytorch.org/whl/cpu`,
-    { stdio: 'inherit', cwd: BACKEND_DIR }
-  )
+  const requirementsPath = join(BACKEND_DIR, 'requirements-embed.txt')
+  execSync(`"${pipExe}" install --no-cache-dir -r "${requirementsPath}"`, {
+    stdio: 'inherit',
+    cwd: BACKEND_DIR
+  })
 
   console.log('\n=== Python 环境准备完成 ===')
   console.log(`  路径: ${EMBED_DIR}`)
