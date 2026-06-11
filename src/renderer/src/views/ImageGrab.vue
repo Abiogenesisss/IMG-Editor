@@ -1111,7 +1111,7 @@ function openExternal(item) {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 8px 0 0;
+  padding: 0;
 }
 
 .site-tabs {
@@ -1119,8 +1119,8 @@ function openExternal(item) {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
-  padding-bottom: 12px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
   flex-shrink: 0;
 }
 
@@ -1143,12 +1143,12 @@ function openExternal(item) {
   width: var(--ui-nav-button-width);
   height: var(--ui-nav-button-height);
   padding: 0 10px;
-  border: 1px solid transparent;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: #72e0d5;
-  color: #4f5578;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   transition:
     background-color 0.16s ease,
@@ -1226,8 +1226,8 @@ function openExternal(item) {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 14px;
-  padding-bottom: 12px;
+  gap: 12px;
+  padding-bottom: 6px;
   border-bottom: none;
   flex-shrink: 0;
 }
@@ -1237,7 +1237,7 @@ function openExternal(item) {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
-  padding: 12px;
+  padding: 10px;
 }
 
 .source-panel {
@@ -1696,8 +1696,8 @@ function openExternal(item) {
   display: flex;
   align-items: center;
   gap: 14px;
-  min-height: 42px;
-  padding: 8px 0 10px;
+  min-height: 36px;
+  padding: 4px 0 6px;
   border-bottom: none;
   flex-shrink: 0;
 }
@@ -1745,10 +1745,6 @@ function openExternal(item) {
   background: transparent;
   color: var(--color-text);
   font-size: 12px;
-}
-
-.grab-grid {
-  padding-top: 12px;
 }
 
 .grab-card img {

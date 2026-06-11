@@ -1761,9 +1761,9 @@ function resetStatus() {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   overflow: hidden;
-  padding: 12px 0 0;
+  padding: 0;
 }
 
 .workflow-toolbar {
@@ -1772,7 +1772,7 @@ function resetStatus() {
   grid-template-columns: minmax(360px, auto) auto minmax(300px, 1fr);
   gap: 10px;
   align-items: center;
-  padding: 0 0 12px;
+  padding: 0 0 8px;
   border: none;
   border-radius: 0;
   background: transparent;

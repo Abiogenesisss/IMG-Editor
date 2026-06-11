@@ -1170,7 +1170,7 @@ const showSettings = ref(true)
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  background: var(--color-surface-soft);
+  background: var(--color-surface);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0 0 12px;

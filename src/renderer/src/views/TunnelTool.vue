@@ -437,7 +437,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 8px 0 0;
+  padding: 0;
   min-width: 0;
 }
 
@@ -447,7 +447,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding-bottom: 12px;
+  padding-bottom: 8px;
   flex-shrink: 0;
 }
 
@@ -500,8 +500,8 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(420px, 1fr) minmax(360px, 0.8fr) 360px;
   grid-template-rows: auto minmax(180px, 1fr);
-  gap: 14px;
-  padding-top: 14px;
+  gap: 12px;
+  padding-top: 10px;
 }
 
 .tunnel-panel {

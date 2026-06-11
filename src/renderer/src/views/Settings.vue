@@ -874,7 +874,7 @@ const previewUrl = computed(() => {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  padding: 8px 0 24px;
+  padding: 0 0 20px;
 }
 
 .settings-content {
@@ -883,7 +883,7 @@ const previewUrl = computed(() => {
   align-self: center;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 18px;
 }
 
 /* ===== Section ===== */
@@ -891,14 +891,14 @@ const previewUrl = computed(() => {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  padding: 20px;
+  padding: 16px;
 }
 
 .section-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   color: var(--color-text);
 }
 
@@ -1425,8 +1425,8 @@ const previewUrl = computed(() => {
 }
 
 .gpu-status-card.available {
-  border-color: var(--color-tag-has-border);
-  background: var(--color-tag-has-bg);
+  border-color: rgba(22, 163, 74, 0.45);
+  background: rgba(22, 163, 74, 0.08);
 }
 
 .gpu-status-card.loading {
@@ -1452,7 +1452,7 @@ const previewUrl = computed(() => {
 }
 
 .gpu-status-card.available .gpu-status-icon {
-  background: var(--color-tag-has-bg);
+  background: rgba(22, 163, 74, 0.16);
   color: var(--color-success);
 }
 
@@ -1513,9 +1513,9 @@ const previewUrl = computed(() => {
 }
 
 .menu-card.active {
-  border-color: var(--color-accent);
-  background: var(--color-accent-light);
-  box-shadow: 0 0 0 1px var(--color-accent);
+  border-color: var(--color-info);
+  background: var(--color-info-light);
+  box-shadow: 0 0 0 1px var(--color-info);
 }
 
 .menu-card.required {
@@ -1529,8 +1529,8 @@ const previewUrl = computed(() => {
 }
 
 .menu-card.required.active:hover {
-  border-color: var(--color-accent);
-  background: var(--color-accent-light);
+  border-color: var(--color-info);
+  background: var(--color-info-light);
 }
 
 .required-badge {
@@ -1552,8 +1552,8 @@ const previewUrl = computed(() => {
   width: 44px;
   height: 44px;
   border-radius: var(--radius-sm);
-  background: var(--color-primary-light);
-  color: var(--color-accent-text);
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--color-info);
   transition:
     background 0.2s,
     color 0.2s;
@@ -1613,35 +1613,35 @@ const previewUrl = computed(() => {
 
 /* 菜单卡片 - 暗色模式下激活态更醒目 */
 [data-theme='dark'] .menu-card {
-  background: rgba(30, 30, 34, 0.6);
-  border-color: #3f3f46;
+  background: rgba(24, 24, 27, 0.78);
+  border-color: rgba(82, 82, 91, 0.72);
 }
 [data-theme='dark'] .menu-card:hover {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border-hover);
+  background: rgba(39, 39, 42, 0.88);
+  border-color: rgba(161, 161, 170, 0.5);
 }
 [data-theme='dark'] .menu-card.active {
-  background: var(--color-accent-light);
-  border-color: var(--color-accent);
+  background: rgba(24, 24, 27, 0.92);
+  border-color: rgba(96, 165, 250, 0.58);
   box-shadow:
-    0 0 0 1px var(--color-accent),
-    0 2px 10px rgba(0, 0, 0, 0.4);
+    inset 0 0 0 1px rgba(96, 165, 250, 0.22),
+    0 1px 0 rgba(255, 255, 255, 0.04);
 }
 [data-theme='dark'] .menu-card.active .menu-card-icon {
-  background: rgba(244, 244, 245, 0.16);
-  color: var(--color-text);
+  background: rgba(96, 165, 250, 0.13);
+  color: #93c5fd;
 }
 [data-theme='dark'] .menu-card:not(.active) .menu-card-icon {
   background: rgba(63, 63, 70, 0.5);
   color: #71717a;
 }
 [data-theme='dark'] .menu-card.required:hover {
-  background: rgba(30, 30, 34, 0.6);
-  border-color: #3f3f46;
+  background: rgba(24, 24, 27, 0.78);
+  border-color: rgba(82, 82, 91, 0.72);
 }
 [data-theme='dark'] .menu-card.required.active:hover {
-  background: var(--color-accent-light);
-  border-color: var(--color-accent);
+  background: rgba(24, 24, 27, 0.92);
+  border-color: rgba(96, 165, 250, 0.58);
 }
 
 /* 配置项卡片 - 暗色模式优化 */
