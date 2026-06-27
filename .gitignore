@@ -15,3 +15,5 @@ workflow_runs/
 .env
 .env.*
 backups/
+.claude/
+.npm-cache/

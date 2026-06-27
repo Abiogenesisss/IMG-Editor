@@ -26,6 +26,8 @@ from tasks.cluster import (extract_style_batch, extract_semantic_batch,
 from tasks.split import three_stage_split_batch
 from tasks.augment import cutout_one, perspective_one, gaussian_blur_noise_one, preview_augment
 from tasks.tagger import list_models as tagger_list_models, download_model as tagger_download, tag_batch
+from tasks.deepghs import (list_models as deepghs_list_models, download_model as deepghs_download,
+                           analyze_batch as deepghs_analyze)
 from tasks.caption import (caption_one, caption_batch_api, caption_batch_multi_api,
                            local_load_model, local_unload_model, local_model_status,
                            local_caption_one, local_caption_batch, cleanup_local_model)
@@ -35,6 +37,7 @@ from tasks.grab import run_grab_download
 from tasks.resize import cleanup_cache as resize_cleanup
 from tasks.split import cleanup_cache as split_cleanup
 from tasks.tagger import cleanup_cache as tagger_cleanup
+from tasks.deepghs import cleanup_cache as deepghs_cleanup
 from tasks.cluster import cleanup_cache as cluster_cleanup
 from tasks.gpu_config import set_gpu_enabled, gpu_status as get_gpu_status
 
@@ -175,6 +178,9 @@ class Handler(BaseHTTPRequestHandler):
             "/tagger-models": self._tagger_models,
             "/tagger-download": self._tagger_download,
             "/tagger-tag": self._tagger_tag,
+            "/deepghs-models": self._deepghs_models,
+            "/deepghs-download": self._deepghs_download,
+            "/deepghs-analyze": self._deepghs_analyze,
             "/upscale": self._upscale,
             "/preview-upscale": self._preview_upscale,
             "/upscale-models": self._upscale_models,
@@ -534,6 +540,86 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._send_event("done", {"success": False, "error": self._log_exception(exc, "tagger failed")})
 
+    # ---- DeepGHS: model list ----
+    def _deepghs_models(self):
+        models = deepghs_list_models()
+        self._json({"success": True, "models": models})
+
+    # ---- DeepGHS: model download ----
+    def _deepghs_download(self):
+        body = self._read_body()
+        model_key = body.get("model_key", "")
+
+        if not model_key:
+            return self._json({"success": False, "error": "no model_key"}, 400)
+
+        self._begin_sse()
+
+        def on_progress(step, total_steps, file_name, downloaded, total):
+            self._send_event("progress", {
+                "step": step,
+                "total_steps": total_steps,
+                "file": file_name,
+                "downloaded": downloaded,
+                "total": total,
+            })
+
+        try:
+            result = deepghs_download(model_key, progress_cb=on_progress)
+            self._send_event("done", {"success": result.get("ok", False),
+                                       "error": result.get("error", "")})
+        except Exception as e:
+            self._send_event("done", {"success": False, "error": str(e)})
+
+    # ---- DeepGHS: classify first, then aesthetic score ----
+    def _deepghs_analyze(self):
+        body = self._read_body()
+        files = body.get("files", [])
+        classifier_model_key = body.get("classifier_model_key", "")
+        aesthetic_model_key = body.get("aesthetic_model_key", "")
+        allowed_classes = body.get("allowed_classes", [])
+        class_threshold = body.get("class_threshold", 0.0)
+        min_score = body.get("min_score", 5.0)
+        score_only_passed = bool(body.get("score_only_passed", True))
+
+        if not files:
+            return self._json({"success": False, "error": "no files"}, 400)
+        if not classifier_model_key:
+            return self._json({"success": False, "error": "no classifier_model_key"}, 400)
+        if not aesthetic_model_key:
+            return self._json({"success": False, "error": "no aesthetic_model_key"}, 400)
+
+        self._begin_sse()
+
+        try:
+            clear_cancelled()
+            results = deepghs_analyze(
+                files,
+                classifier_model_key,
+                aesthetic_model_key,
+                allowed_classes=allowed_classes,
+                class_threshold=class_threshold,
+                min_score=min_score,
+                score_only_passed=score_only_passed,
+                cancel_event=_cancel_event,
+                progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t})
+            )
+            ok_count = sum(1 for r in results if r.get("ok"))
+            scored_count = sum(1 for r in results if r.get("aesthetic_score") is not None)
+            low_count = sum(1 for r in results if r.get("low_score"))
+            self._send_event("done", {
+                "success": True,
+                "processed": ok_count,
+                "scored": scored_count,
+                "low_count": low_count,
+                "total": len(files),
+                "results": results,
+            })
+        except CancelledError:
+            self._send_event("done", {"success": False, "error": "task cancelled"})
+        except Exception as exc:
+            self._send_event("done", {"success": False, "error": self._log_exception(exc, "deepghs failed")})
+
     # ---- 超分辨率: 批量处理（GPU 顺序执行，不走进程池）----
     def _upscale(self):
         body = self._read_body()
@@ -834,6 +920,7 @@ class Handler(BaseHTTPRequestHandler):
             ("resize", resize_cleanup),
             ("split", split_cleanup),
             ("tagger", tagger_cleanup),
+            ("deepghs", deepghs_cleanup),
             ("cluster", cluster_cleanup),
             ("upscale", upscale_cleanup),
         ]:
@@ -890,6 +977,7 @@ class Handler(BaseHTTPRequestHandler):
             ("resize", resize_cleanup),
             ("split", split_cleanup),
             ("tagger", tagger_cleanup),
+            ("deepghs", deepghs_cleanup),
             ("cluster", cluster_cleanup),
             ("upscale", upscale_cleanup),
             ("caption_local", cleanup_local_model),

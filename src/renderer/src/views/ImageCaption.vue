@@ -13,7 +13,15 @@ import {
 import FolderRow from '../components/FolderRow.vue'
 import IconButton from '../components/IconButton.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
-import { ChevronLeft, ChevronRight, Settings, X } from 'lucide-vue-next'
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  FolderOpen,
+  LoaderCircle,
+  Settings,
+  X
+} from 'lucide-vue-next'
 
 defineOptions({ name: 'ImageCaption' })
 
@@ -647,18 +655,7 @@ const showSettings = ref(true)
                   <span class="sp-config-model">{{ cfg.model }}</span>
                 </div>
                 <span v-if="cfg.enabled && isApiSelected(cfg)" class="sp-config-check">
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
+                  <Check :size="14" :stroke-width="2.5" aria-hidden="true" />
                 </span>
               </div>
             </div>
@@ -712,18 +709,7 @@ const showSettings = ref(true)
                   placeholder="Qwen/Qwen3.5-VL-2B"
                 />
                 <span v-if="pathStatus === 'valid'" class="sp-path-icon valid" title="本地路径有效">
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
+                  <Check :size="14" :stroke-width="2.5" aria-hidden="true" />
                 </span>
                 <button
                   v-else-if="pathStatus === 'invalid'"
@@ -734,19 +720,7 @@ const showSettings = ref(true)
                   @mousedown.prevent
                   @click="clearLocalModelPath"
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
+                  <X :size="14" :stroke-width="2.5" aria-hidden="true" />
                 </button>
                 <span
                   v-else-if="pathStatus === 'hf'"
@@ -755,18 +729,7 @@ const showSettings = ref(true)
                   >HF</span
                 >
                 <span v-else-if="pathStatus === 'checking'" class="sp-path-icon checking">
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="10"></circle>
-                  </svg>
+                  <LoaderCircle :size="14" :stroke-width="2" aria-hidden="true" />
                 </span>
               </div>
               <button
@@ -774,20 +737,7 @@ const showSettings = ref(true)
                 title="浏览本地模型文件夹"
                 @click="browseLocalModel"
               >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path
-                    d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
-                  ></path>
-                </svg>
+                <FolderOpen :size="16" :stroke-width="2" aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -1152,8 +1102,8 @@ const showSettings = ref(true)
   right: 0;
   padding: 3px 6px;
   font-size: 10px;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.6);
+  color: var(--color-overlay-text);
+  background: var(--color-overlay-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1242,7 +1192,7 @@ const showSettings = ref(true)
   padding: 6px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text);
   cursor: pointer;
   user-select: none;
@@ -1252,7 +1202,8 @@ const showSettings = ref(true)
   background: var(--color-input-bg);
 }
 .sp-radio:hover {
-  border: var(--color-text-muted);
+  border-color: var(--color-accent-border);
+  background: var(--color-info-light);
 }
 .sp-radio.active {
   border-color: var(--color-text);
@@ -1261,7 +1212,7 @@ const showSettings = ref(true)
 .sp-radio-dot {
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: 999px;
   border: 2px solid var(--color-border-unchecked);
   box-sizing: border-box;
   transition: border-color 0.15s;
@@ -1277,7 +1228,7 @@ const showSettings = ref(true)
   left: 2px;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 999px;
   background: var(--color-active-bg);
 }
 
@@ -1397,12 +1348,12 @@ const showSettings = ref(true)
 }
 .generate-btn {
   width: 100%;
-  height: 34px;
+  height: 32px;
   border: 1px solid var(--color-active-bg);
   border-radius: var(--radius-sm);
   background: var(--color-active-bg);
   color: var(--color-active-text);
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -1481,7 +1432,7 @@ const showSettings = ref(true)
   font-size: 10px;
   font-weight: 700;
   color: var(--color-warning);
-  letter-spacing: -0.5px;
+  letter-spacing: 0;
 }
 .sp-path-icon.checking {
   color: var(--color-text-muted);
@@ -1543,11 +1494,31 @@ const showSettings = ref(true)
 .sp-status-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: 999px;
   background: var(--color-border);
   flex-shrink: 0;
 }
 .sp-status-dot.on {
   background: var(--color-success);
+}
+
+.sp-radio.active,
+.sp-radio:hover {
+  border-color: var(--color-accent-border);
+  background: var(--color-info-light);
+  color: var(--color-accent-text);
+}
+
+.generate-btn,
+.sp-load-btn {
+  background: var(--color-active-bg);
+  border-color: var(--color-active-bg);
+  color: var(--color-on-accent);
+  box-shadow: var(--shadow-button);
+}
+
+.generate-btn:hover:not(:disabled),
+.sp-load-btn:hover:not(:disabled) {
+  background: var(--color-accent-hover);
 }
 </style>

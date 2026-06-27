@@ -222,9 +222,7 @@ function previewBlurNoise() {
             三分法裁剪
           </button>
           <div v-if="activePanel === 'split'" class="action-panel">
-            <div style="font-size: 12px; color: #4b5563; font-weight: 500; margin-bottom: 2px">
-              阈值
-            </div>
+            <div class="panel-title">阈值</div>
             <div class="panel-row">
               <label>全身</label>
               <input v-model.number="personConf" type="range" min="0.1" max="0.9" step="0.05" />
@@ -428,10 +426,10 @@ function previewBlurNoise() {
   width: var(--ui-panel-run-width);
   height: var(--ui-panel-run-height);
   padding: 0 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: #fff;
-  color: #1b1b1f;
+  background: var(--color-input-bg);
+  color: var(--color-text);
   font-size: 12px;
   cursor: pointer;
   transition:
@@ -441,13 +439,26 @@ function previewBlurNoise() {
 }
 
 .panel-preview:hover:not(:disabled) {
-  background: #f3f4f6;
-  border-color: #b0b0b0;
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-hover);
 }
 
 .panel-preview:disabled {
-  color: #c0c0c0;
-  border-color: #eee;
+  color: var(--color-text-muted);
+  border-color: var(--color-border-light);
   cursor: not-allowed;
+}
+
+.panel-title {
+  margin-bottom: 2px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.panel-preview:hover:not(:disabled) {
+  border-color: var(--color-accent-border);
+  background: var(--color-info-light);
+  color: var(--color-active-bg);
 }
 </style>

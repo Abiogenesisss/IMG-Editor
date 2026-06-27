@@ -5,7 +5,7 @@ import { useGridObserver } from '../composables/useGridObserver'
 import FolderRow from '../components/FolderRow.vue'
 import IconButton from '../components/IconButton.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
-import { X } from 'lucide-vue-next'
+import { ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-vue-next'
 
 defineOptions({ name: 'ImageUpscale' })
 
@@ -350,20 +350,13 @@ const canPreview = computed(
               <span class="panel-label">降噪配置</span>
               <div class="custom-select" @click.stop="denoiseDropOpen = !denoiseDropOpen">
                 <span class="custom-select-value">{{ denoiseLabel }}</span>
-                <svg
+                <ChevronDown
                   class="custom-select-arrow"
                   :class="{ open: denoiseDropOpen }"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
+                  :size="12"
+                  :stroke-width="2.5"
+                  aria-hidden="true"
+                />
                 <Transition name="dropdown">
                   <div v-if="denoiseDropOpen" class="custom-select-list">
                     <div
@@ -517,28 +510,8 @@ const canPreview = computed(
             />
             <div class="slider-line" :style="{ left: sliderPos + '%' }">
               <div class="slider-handle">
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#fff"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                >
-                  <polyline points="15 18 9 12 15 6"></polyline>
-                </svg>
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#fff"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                >
-                  <polyline points="9 18 15 12 9 6"></polyline>
-                </svg>
+                <ChevronLeft :size="16" :stroke-width="2.5" aria-hidden="true" />
+                <ChevronRight :size="16" :stroke-width="2.5" aria-hidden="true" />
               </div>
             </div>
             <span class="compare-label label-left">原图</span>
@@ -616,7 +589,7 @@ const canPreview = computed(
 
 .panel-label {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   flex-shrink: 0;
 }
 
@@ -631,19 +604,20 @@ const canPreview = computed(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 10px;
-  border: 1px solid #e5e7eb;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   font-size: 12px;
-  color: #1b1b1f;
-  background: #fff;
+  color: var(--color-text);
+  background: var(--color-input-bg);
   cursor: pointer;
   user-select: none;
   transition: border-color 0.15s;
 }
 
 .custom-select:hover {
-  border-color: #b0b0b0;
+  border-color: var(--color-border-hover);
 }
 
 .custom-select-value {
@@ -652,7 +626,7 @@ const canPreview = computed(
 
 .custom-select-arrow {
   flex-shrink: 0;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   transition: transform 0.2s;
 }
 
@@ -665,18 +639,18 @@ const canPreview = computed(
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  z-index: 20;
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-dropdown);
   overflow: hidden;
 }
 
 .custom-select-item {
-  padding: 6px 10px;
+  padding: 6px 9px;
   font-size: 12px;
-  color: #374151;
+  color: var(--color-text-secondary);
   cursor: pointer;
   transition:
     background 0.1s,
@@ -684,12 +658,12 @@ const canPreview = computed(
 }
 
 .custom-select-item:hover {
-  background: #f3f4f6;
+  background: var(--color-surface-hover);
 }
 
 .custom-select-item.active {
-  background: #1b1b1f;
-  color: #fff;
+  background: var(--color-active-bg);
+  color: var(--color-active-text);
 }
 
 /* 下拉框动画 */
@@ -709,16 +683,17 @@ const canPreview = computed(
 
 /* 执行按钮强调色 */
 .upscale-run-btn {
-  background: #1b1b1f;
-  color: #fff;
-  border-color: #1b1b1f;
+  background: var(--color-active-bg);
+  color: var(--color-active-text);
+  border-color: var(--color-active-bg);
   transition:
     background 0.15s,
     opacity 0.15s;
 }
 
 .upscale-run-btn:hover:not(:disabled) {
-  background: #333;
+  background: var(--color-text-secondary);
+  border-color: var(--color-text-secondary);
 }
 
 .upscale-run-btn:disabled {
@@ -731,9 +706,9 @@ const canPreview = computed(
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   height: 40px;
-  padding: 6px 0 8px;
+  padding: 7px 0 9px;
   box-sizing: border-box;
   border-bottom: none;
   flex-shrink: 0;
@@ -747,7 +722,7 @@ const canPreview = computed(
 }
 
 .preview-mode-tag {
-  padding: 4px 10px;
+  padding: 3px 9px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   font-size: 12px;
@@ -780,7 +755,7 @@ const canPreview = computed(
   transform: translateX(-50%);
   display: flex;
   gap: 4px;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--color-overlay-soft);
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   z-index: 10;
@@ -788,19 +763,19 @@ const canPreview = computed(
 
 .preview-mode-float .preview-mode-tag {
   background: transparent;
-  border-color: rgba(255, 255, 255, 0.3);
-  color: rgba(255, 255, 255, 0.7);
+  border-color: var(--color-overlay-text-muted);
+  color: var(--color-overlay-text-muted);
 }
 
 .preview-mode-float .preview-mode-tag:hover {
-  border-color: rgba(255, 255, 255, 0.6);
-  color: #fff;
+  border-color: var(--color-overlay-text);
+  color: var(--color-overlay-text);
 }
 
 .preview-mode-float .preview-mode-tag.active {
-  background: #fff;
-  border-color: #fff;
-  color: #1b1b1f;
+  background: var(--color-overlay-text);
+  border-color: var(--color-overlay-text);
+  color: var(--color-stage-bg);
 }
 
 /* ============================
@@ -843,11 +818,11 @@ const canPreview = computed(
   top: 0;
   bottom: 0;
   width: 2px;
-  background: #fff;
+  background: var(--color-overlay-text);
   transform: translateX(-50%);
   pointer-events: none;
   z-index: 2;
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+  box-shadow: none;
 }
 
 .slider-handle {
@@ -857,9 +832,10 @@ const canPreview = computed(
   transform: translate(-50%, -50%);
   width: 36px;
   height: 36px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  border: 2px solid #fff;
+  border-radius: 999px;
+  background: var(--color-overlay-soft);
+  border: 2px solid var(--color-overlay-text);
+  color: var(--color-overlay-text);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -870,8 +846,8 @@ const canPreview = computed(
   position: absolute;
   bottom: 10px;
   padding: 3px 10px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  background: var(--color-overlay-soft);
+  color: var(--color-overlay-text);
   font-size: 12px;
   border-radius: var(--radius-sm);
   pointer-events: none;
@@ -954,8 +930,8 @@ const canPreview = computed(
   height: 36px;
   border-radius: var(--radius-sm);
   border: none;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
+  background: var(--color-overlay-soft);
+  color: var(--color-overlay-text);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -965,6 +941,24 @@ const canPreview = computed(
 }
 
 .preview-close-btn:hover {
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--color-overlay-strong);
+}
+
+.custom-select {
+  height: 32px;
+  background: var(--color-input-bg);
+}
+
+.upscale-run-btn,
+.preview-mode-tag.active {
+  background: var(--color-active-bg);
+  border-color: var(--color-active-bg);
+  color: var(--color-on-accent);
+  box-shadow: var(--shadow-button);
+}
+
+.upscale-run-btn:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
 }
 </style>

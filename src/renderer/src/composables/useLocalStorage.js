@@ -1,4 +1,4 @@
-import { ref, watch, onMounted, onUnmounted, getCurrentInstance } from 'vue'
+import { ref, watch } from 'vue'
 
 /**
  * 创建一个与 localStorage 双向同步的 ref
@@ -15,39 +15,13 @@ export function useLocalStorage(key, defaultValue, options = {}) {
 
   const data = ref(initial)
 
-  // 写入时同步到 localStorage
-  let skipNextWatch = false
   watch(
     data,
     (v) => {
-      if (skipNextWatch) {
-        skipNextWatch = false
-        return
-      }
       localStorage.setItem(key, serialize(v, type))
     },
     { deep: type === 'json' }
   )
-
-  // 监听其他标签页/窗口的 storage 变更
-  function onStorageChange(e) {
-    if (e.key === key && e.newValue !== null) {
-      skipNextWatch = true
-      data.value = deserialize(e.newValue, type)
-    } else if (e.key === key && e.newValue === null) {
-      skipNextWatch = true
-      data.value = defaultValue
-    }
-  }
-
-  // 仅在组件上下文中注册生命周期钩子
-  if (getCurrentInstance()) {
-    onMounted(() => window.addEventListener('storage', onStorageChange))
-    onUnmounted(() => window.removeEventListener('storage', onStorageChange))
-  } else {
-    // 在组件外使用时直接注册
-    window.addEventListener('storage', onStorageChange)
-  }
 
   return data
 }

@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
@@ -14,7 +13,9 @@ const api = {
   getApiConfigs: () => ipcRenderer.invoke('get-api-configs'),
   saveApiConfigs: (configs) => ipcRenderer.invoke('save-api-configs', configs),
   migrateApiConfigs: (configs) => ipcRenderer.invoke('migrate-api-configs', configs),
+  generateImage: (options) => ipcRenderer.invoke('generate-image', options),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
+  selectImageFiles: () => ipcRenderer.invoke('select-image-files'),
   saveTextFile: (options) => ipcRenderer.invoke('save-text-file', options),
   resolveOutputDir: (inputDir) => ipcRenderer.invoke('resolve-output-dir', inputDir),
   readImages: (folderPath) => ipcRenderer.invoke('read-images', folderPath),
@@ -65,12 +66,10 @@ const api = {
 
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
   } catch (error) {
     console.error(error)
   }
 } else {
-  window.electron = electronAPI
   window.api = api
 }

@@ -1,7 +1,23 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { Waypoints } from 'lucide-vue-next'
+import {
+  CheckCircle2,
+  CircleX,
+  Copy,
+  Cpu,
+  Eye,
+  EyeOff,
+  Globe2,
+  LayoutGrid,
+  Monitor,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X
+} from 'lucide-vue-next'
 import { loadApiConfigs, saveApiConfigs } from '../services/apiConfigs'
+import { settingsMenuItems } from '../services/navigation'
 
 defineOptions({ name: 'Settings' })
 
@@ -62,17 +78,7 @@ async function syncGpuToBackend(enabled) {
 }
 
 // ===================== 菜单显示设置 =====================
-const allMenuItems = [
-  { path: '/grab', label: '图片抓取', icon: 'grab', required: false },
-  { path: '/process', label: '图片处理', icon: 'process', required: false },
-  { path: '/augment', label: '数据增强', icon: 'augment', required: false },
-  { path: '/upscale', label: '超分辨率', icon: 'upscale', required: false },
-  { path: '/tagger', label: '图片打标', icon: 'tagger', required: false },
-  { path: '/caption', label: 'Caption', icon: 'caption', required: false },
-  { path: '/workflow', label: '工作流', icon: 'workflow', required: false },
-  { path: '/tunnel', label: '隧道工具', icon: 'tunnel', required: false },
-  { path: '/settings', label: '设置', icon: 'settings', required: true }
-]
+const allMenuItems = settingsMenuItems
 
 function loadMenuConfig() {
   try {
@@ -278,6 +284,17 @@ const previewUrl = computed(() => {
   const endpoint = formEndpoint.value.trim()
   const model = formModel.value.trim().toLowerCase()
   if (!endpoint) return ''
+  if (/gpt[-_\s]?image|gpt[-_\s]?img|gpt.*\bimg\b/.test(model)) {
+    const base = endpoint.replace(/\/+$/, '')
+    if (/\/images\/(generations|edits)$/i.test(base)) return base
+    if (/\/v\d+$/i.test(base)) return base + '/images/generations'
+    return base + '/v1/images/generations'
+  }
+  if (/nano[-_\s]?banana|gemini.*image|flash-image|pro-image/.test(model)) {
+    const base = endpoint.replace(/\/+$/, '')
+    if (/\/interactions$/i.test(base)) return base
+    return base + '/interactions'
+  }
   if (model.includes('gemini')) {
     return endpoint
   }
@@ -297,21 +314,7 @@ const previewUrl = computed(() => {
       <!-- 菜单显示设置 -->
       <section class="settings-section">
         <div class="section-header">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <rect x="3" y="3" width="7" height="7"></rect>
-            <rect x="14" y="3" width="7" height="7"></rect>
-            <rect x="3" y="14" width="7" height="7"></rect>
-            <rect x="14" y="14" width="7" height="7"></rect>
-          </svg>
+          <LayoutGrid :size="18" :stroke-width="2" aria-hidden="true" />
           <h2>菜单显示设置</h2>
         </div>
         <p class="menu-hint">选择要在导航栏中显示的功能项。隐藏不常用的菜单可以节省空间。</p>
@@ -324,147 +327,7 @@ const previewUrl = computed(() => {
           >
             <span v-if="item.required" class="required-badge">必选</span>
             <div class="menu-card-icon">
-              <!-- 图片抓取 -->
-              <svg
-                v-if="item.icon === 'grab'"
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                <polyline points="21 15 16 10 5 21"></polyline>
-              </svg>
-              <!-- 图片处理 -->
-              <svg
-                v-else-if="item.icon === 'process'"
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-                <polyline points="2 17 12 22 22 17"></polyline>
-                <polyline points="2 12 12 17 22 12"></polyline>
-              </svg>
-              <!-- 数据增强 -->
-              <svg
-                v-else-if="item.icon === 'augment'"
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
-                <polyline points="17 6 23 6 23 12"></polyline>
-              </svg>
-              <!-- 超分辨率 -->
-              <svg
-                v-else-if="item.icon === 'upscale'"
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polyline points="15 3 21 3 21 9"></polyline>
-                <polyline points="9 21 3 21 3 15"></polyline>
-                <line x1="21" y1="3" x2="14" y2="10"></line>
-                <line x1="3" y1="21" x2="10" y2="14"></line>
-              </svg>
-              <!-- 图片打标 -->
-              <svg
-                v-else-if="item.icon === 'tagger'"
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path
-                  d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"
-                ></path>
-                <line x1="7" y1="7" x2="7.01" y2="7"></line>
-              </svg>
-              <!-- Caption -->
-              <svg
-                v-else-if="item.icon === 'caption'"
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-              </svg>
-              <!-- 工作流 -->
-              <Waypoints
-                v-else-if="item.icon === 'workflow'"
-                :size="28"
-                :stroke-width="1.5"
-                aria-hidden="true"
-              />
-              <!-- 设置 -->
-              <svg
-                v-else-if="item.icon === 'tunnel'"
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M6 8h5"></path>
-                <path d="M13 8h5"></path>
-                <path d="M6 16h5"></path>
-                <path d="M13 16h5"></path>
-                <path d="M11 8a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2"></path>
-                <path d="M13 8a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2"></path>
-                <circle cx="5" cy="8" r="1"></circle>
-                <circle cx="19" cy="8" r="1"></circle>
-                <circle cx="5" cy="16" r="1"></circle>
-                <circle cx="19" cy="16" r="1"></circle>
-              </svg>
-              <svg
-                v-else-if="item.icon === 'settings'"
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <circle cx="12" cy="12" r="3"></circle>
-                <path
-                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
-                ></path>
-              </svg>
+              <component :is="item.icon" :size="28" :stroke-width="1.5" aria-hidden="true" />
             </div>
             <span class="menu-card-label">{{ item.label }}</span>
           </div>
@@ -475,59 +338,20 @@ const previewUrl = computed(() => {
       <!-- GPU 加速设置 -->
       <section class="settings-section">
         <div class="section-header">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
-            <path d="M6 12h.01"></path>
-            <path d="M10 12h.01"></path>
-            <path d="M14 12h.01"></path>
-            <path d="M18 12h.01"></path>
-            <line x1="6" y1="2" x2="6" y2="6"></line>
-            <line x1="18" y1="2" x2="18" y2="6"></line>
-          </svg>
+          <Cpu :size="18" :stroke-width="2" aria-hidden="true" />
           <h2>GPU 加速</h2>
         </div>
 
         <!-- GPU 状态信息 -->
         <div v-if="gpuInfo" class="gpu-status-card" :class="{ available: gpuInfo.cuda_available }">
           <div class="gpu-status-icon">
-            <svg
+            <CheckCircle2
               v-if="gpuInfo.cuda_available"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-              <polyline points="22 4 12 14.01 9 11.01"></polyline>
-            </svg>
-            <svg
-              v-else
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="15" y1="9" x2="9" y2="15"></line>
-              <line x1="9" y1="9" x2="15" y2="15"></line>
-            </svg>
+              :size="20"
+              :stroke-width="2"
+              aria-hidden="true"
+            />
+            <CircleX v-else :size="20" :stroke-width="2" aria-hidden="true" />
           </div>
           <div class="gpu-status-info">
             <span v-if="gpuInfo.cuda_available" class="gpu-name">{{ gpuInfo.gpu_name }}</span>
@@ -562,21 +386,7 @@ const previewUrl = computed(() => {
       <!-- 自动更新 -->
       <section class="settings-section">
         <div class="section-header">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <polyline points="1 20 1 14 7 14"></polyline>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
-            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
-          </svg>
+          <RefreshCw :size="18" :stroke-width="2" aria-hidden="true" />
           <h2>自动更新</h2>
         </div>
         <div class="setting-row">
@@ -641,36 +451,12 @@ const previewUrl = computed(() => {
       <!-- API 配置 -->
       <section class="settings-section">
         <div class="section-header">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-            <line x1="8" y1="21" x2="16" y2="21"></line>
-            <line x1="12" y1="17" x2="12" y2="21"></line>
-          </svg>
+          <Monitor :size="18" :stroke-width="2" aria-hidden="true" />
           <h2>
             API 配置 <span class="config-count">({{ apiConfigs.length }})</span>
           </h2>
           <button class="add-config-btn" @click="openAddForm">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-            >
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
+            <Plus :size="14" :stroke-width="2.5" aria-hidden="true" />
             添加配置
           </button>
         </div>
@@ -681,18 +467,7 @@ const previewUrl = computed(() => {
             <div class="form-title">
               {{ editingId ? '编辑 API 配置' : '添加 API 配置' }}
               <button class="form-close" @click="closeForm">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
+                <X :size="14" :stroke-width="2" aria-hidden="true" />
               </button>
             </div>
             <div class="form-row two-col">
@@ -713,22 +488,7 @@ const previewUrl = computed(() => {
             <div class="form-field">
               <label class="form-label">API ENDPOINT</label>
               <div class="form-input-icon">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="2" y1="12" x2="22" y2="12"></line>
-                  <path
-                    d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
-                  ></path>
-                </svg>
+                <Globe2 :size="14" :stroke-width="2" aria-hidden="true" />
                 <input
                   v-model="formEndpoint"
                   class="form-input with-icon"
@@ -748,57 +508,14 @@ const previewUrl = computed(() => {
                   placeholder=""
                 />
                 <button class="eye-btn" @click="showApiKey = !showApiKey">
-                  <svg
-                    v-if="!showApiKey"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                  </svg>
-                  <svg
-                    v-else
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path
-                      d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"
-                    ></path>
-                    <path
-                      d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
-                    ></path>
-                    <line x1="1" y1="1" x2="23" y2="23"></line>
-                  </svg>
+                  <Eye v-if="!showApiKey" :size="16" :stroke-width="2" aria-hidden="true" />
+                  <EyeOff v-else :size="16" :stroke-width="2" aria-hidden="true" />
                 </button>
               </div>
             </div>
             <div class="form-actions">
               <button class="submit-btn" @click="submitForm">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
+                <Copy :size="14" :stroke-width="2" aria-hidden="true" />
                 {{ editingId ? '保存修改' : '添加配置' }}
               </button>
             </div>
@@ -827,36 +544,10 @@ const previewUrl = computed(() => {
             </div>
             <div class="config-actions">
               <button class="config-action-btn" title="编辑" @click="openEditForm(cfg)">
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                </svg>
+                <Pencil :size="15" :stroke-width="2" aria-hidden="true" />
               </button>
               <button class="config-action-btn delete" title="删除" @click="deleteConfig(cfg.id)">
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <polyline points="3 6 5 6 21 6"></polyline>
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
-                  <path d="M10 11v6"></path>
-                  <path d="M14 11v6"></path>
-                </svg>
+                <Trash2 :size="15" :stroke-width="2" aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -874,36 +565,36 @@ const previewUrl = computed(() => {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  padding: 0 0 20px;
+  padding: 0 0 14px;
 }
 
 .settings-content {
   width: 100%;
-  max-width: 720px;
+  max-width: 860px;
   align-self: center;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 10px;
 }
 
 /* ===== Section ===== */
 .settings-section {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 16px;
+  border-radius: var(--radius-md);
+  padding: 13px;
 }
 
 .section-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   color: var(--color-text);
 }
 
 .section-header h2 {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   margin: 0;
   color: var(--color-text);
@@ -912,7 +603,7 @@ const previewUrl = computed(() => {
 .config-count {
   font-weight: 400;
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .add-config-btn {
@@ -920,7 +611,8 @@ const previewUrl = computed(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 14px;
+  height: 28px;
+  padding: 0 10px;
   border: 1px solid var(--color-active-bg);
   border-radius: var(--radius-sm);
   background: var(--color-active-bg);
@@ -938,7 +630,7 @@ const previewUrl = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 0;
+  padding: 9px 0;
   border-bottom: 1px solid var(--color-surface-hover);
 }
 .setting-row:last-child {
@@ -951,7 +643,7 @@ const previewUrl = computed(() => {
   gap: 2px;
 }
 .setting-label {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--color-text);
 }
@@ -963,9 +655,9 @@ const previewUrl = computed(() => {
 /* ===== Toggle ===== */
 .toggle-switch {
   position: relative;
-  width: 38px;
-  height: 20px;
-  border-radius: 10px;
+  width: 32px;
+  height: 16px;
+  border-radius: var(--radius-sm);
   background: var(--color-border-unchecked);
   cursor: pointer;
   transition: background 0.2s;
@@ -978,20 +670,21 @@ const previewUrl = computed(() => {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  box-shadow: none;
   transition: transform 0.2s;
 }
 .toggle-switch.on .toggle-knob {
-  transform: translateX(18px);
+  transform: translateX(16px);
 }
 
 /* ===== Check Button ===== */
 .check-btn {
-  padding: 6px 16px;
+  height: 28px;
+  padding: 0 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
@@ -1023,7 +716,7 @@ const previewUrl = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 8px 10px;
   gap: 12px;
 }
 .update-status-bar.checking {
@@ -1062,7 +755,8 @@ const previewUrl = computed(() => {
   flex-shrink: 0;
 }
 .update-action-btn {
-  padding: 5px 14px;
+  height: 26px;
+  padding: 0 10px;
   border: none;
   border-radius: var(--radius-sm);
   background: var(--color-active-bg);
@@ -1076,7 +770,8 @@ const previewUrl = computed(() => {
   opacity: 0.85;
 }
 .update-dismiss-btn {
-  padding: 4px 10px;
+  height: 26px;
+  padding: 0 9px;
   border: 1px solid var(--color-border-unchecked);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
@@ -1101,8 +796,8 @@ const previewUrl = computed(() => {
 .config-form {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  padding: 16px;
-  margin-bottom: 16px;
+  padding: 13px;
+  margin-bottom: 12px;
   background: var(--color-surface-soft);
 }
 
@@ -1110,7 +805,7 @@ const previewUrl = computed(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text);
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1153,11 +848,11 @@ const previewUrl = computed(() => {
 
 .form-input {
   width: 100%;
-  height: 36px;
-  padding: 0 10px;
+  height: 30px;
+  padding: 0 9px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text);
   outline: none;
   background: var(--color-input-bg);
@@ -1224,7 +919,8 @@ const previewUrl = computed(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 7px 18px;
+  height: 28px;
+  padding: 0 12px;
   border: none;
   border-radius: var(--radius-sm);
   background: var(--color-active-bg);
@@ -1255,10 +951,10 @@ const previewUrl = computed(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 12px;
+  padding: 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   background: var(--color-surface);
   transition:
     border-color 0.15s,
@@ -1277,9 +973,9 @@ const previewUrl = computed(() => {
 /* Toggle for config items */
 .config-toggle {
   position: relative;
-  width: 36px;
-  height: 20px;
-  border-radius: 10px;
+  width: 32px;
+  height: 16px;
+  border-radius: var(--radius-sm);
   background: var(--color-border-unchecked);
   cursor: pointer;
   flex-shrink: 0;
@@ -1292,11 +988,11 @@ const previewUrl = computed(() => {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  box-shadow: none;
   transition: transform 0.2s;
 }
 .config-toggle.on .config-toggle-knob {
@@ -1314,7 +1010,7 @@ const previewUrl = computed(() => {
   margin-bottom: 3px;
 }
 .config-name {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--color-text);
 }
@@ -1343,8 +1039,8 @@ const previewUrl = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1393,9 +1089,9 @@ const previewUrl = computed(() => {
 
 /* ===== Menu Grid Dashboard ===== */
 .menu-hint {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text-secondary);
-  margin: 0 0 16px;
+  margin: 0 0 10px;
 }
 
 .menu-hint-bottom {
@@ -1416,28 +1112,28 @@ const previewUrl = computed(() => {
 .gpu-status-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .gpu-status-card.available {
-  border-color: rgba(22, 163, 74, 0.45);
-  background: rgba(22, 163, 74, 0.08);
+  border-color: var(--color-success-border);
+  background: var(--color-success-light);
 }
 
 .gpu-status-card.loading {
   justify-content: center;
   color: var(--color-text-muted);
-  font-size: 13px;
-  padding: 20px;
+  font-size: 12px;
+  padding: 14px;
 }
 
 .gpu-loading-text {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text-muted);
 }
 
@@ -1445,14 +1141,14 @@ const previewUrl = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
 
 .gpu-status-card.available .gpu-status-icon {
-  background: rgba(22, 163, 74, 0.16);
+  background: var(--color-success-light);
   color: var(--color-success);
 }
 
@@ -1468,7 +1164,7 @@ const previewUrl = computed(() => {
 }
 
 .gpu-name {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--color-text);
 }
@@ -1485,7 +1181,7 @@ const previewUrl = computed(() => {
 .menu-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 8px;
 }
 
 .menu-card {
@@ -1494,16 +1190,16 @@ const previewUrl = computed(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 20px 12px;
-  border: 1.5px solid var(--color-border);
+  gap: 7px;
+  padding: 12px 8px;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
   cursor: pointer;
   transition:
     border-color 0.2s,
     background 0.2s,
-    box-shadow 0.2s;
+    color 0.2s;
   user-select: none;
 }
 
@@ -1515,7 +1211,7 @@ const previewUrl = computed(() => {
 .menu-card.active {
   border-color: var(--color-info);
   background: var(--color-info-light);
-  box-shadow: 0 0 0 1px var(--color-info);
+  box-shadow: none;
 }
 
 .menu-card.required {
@@ -1535,13 +1231,13 @@ const previewUrl = computed(() => {
 
 .required-badge {
   position: absolute;
-  top: 6px;
-  right: 8px;
+  top: 5px;
+  right: 6px;
   font-size: 10px;
   color: var(--color-text-muted);
   background: var(--color-surface-hover);
   padding: 1px 6px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   line-height: 1.4;
 }
 
@@ -1549,10 +1245,10 @@ const previewUrl = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 30px;
+  height: 30px;
   border-radius: var(--radius-sm);
-  background: rgba(59, 130, 246, 0.14);
+  background: var(--color-info-light);
   color: var(--color-info);
   transition:
     background 0.2s,
@@ -1565,7 +1261,7 @@ const previewUrl = computed(() => {
 }
 
 .menu-card-label {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--color-text);
 }
@@ -1574,158 +1270,77 @@ const previewUrl = computed(() => {
   color: var(--color-text-muted);
 }
 
-/* ===== Dark Mode Enhancements ===== */
-[data-theme='dark'] .settings-section {
-  border-color: rgba(63, 63, 70, 0.6);
-  background: rgba(39, 39, 42, 0.65);
-  backdrop-filter: blur(8px);
+/* Settings layout polish */
+.settings-page {
+  padding: 2px 0 16px;
 }
 
-/* 表单输入框 - 暗色模式增强可见性 */
-[data-theme='dark'] .form-input {
-  background: rgba(24, 24, 27, 0.8);
-  border-color: #52525b;
-}
-[data-theme='dark'] .form-input:focus {
-  border-color: var(--color-text);
-  box-shadow: 0 0 0 2px var(--color-focus-ring);
-}
-[data-theme='dark'] .form-input::placeholder {
-  color: #52525b;
+.settings-content {
+  max-width: 920px;
+  gap: 14px;
 }
 
-/* 开关旋钮 - 暗色模式提高对比度 */
-[data-theme='dark'] .toggle-knob,
-[data-theme='dark'] .config-toggle-knob {
-  background: #ffffff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-}
-[data-theme='dark'] .toggle-switch:not(.on),
-[data-theme='dark'] .config-toggle:not(.on) {
-  background: #3f3f46;
-}
-[data-theme='dark'] .toggle-switch.on {
-  background: var(--color-toggle-on);
-}
-[data-theme='dark'] .config-toggle.on {
-  background: var(--color-toggle-on);
+.settings-section {
+  padding: 16px;
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-xs);
 }
 
-/* 菜单卡片 - 暗色模式下激活态更醒目 */
-[data-theme='dark'] .menu-card {
-  background: rgba(24, 24, 27, 0.78);
-  border-color: rgba(82, 82, 91, 0.72);
-}
-[data-theme='dark'] .menu-card:hover {
-  background: rgba(39, 39, 42, 0.88);
-  border-color: rgba(161, 161, 170, 0.5);
-}
-[data-theme='dark'] .menu-card.active {
-  background: rgba(24, 24, 27, 0.92);
-  border-color: rgba(96, 165, 250, 0.58);
-  box-shadow:
-    inset 0 0 0 1px rgba(96, 165, 250, 0.22),
-    0 1px 0 rgba(255, 255, 255, 0.04);
-}
-[data-theme='dark'] .menu-card.active .menu-card-icon {
-  background: rgba(96, 165, 250, 0.13);
-  color: #93c5fd;
-}
-[data-theme='dark'] .menu-card:not(.active) .menu-card-icon {
-  background: rgba(63, 63, 70, 0.5);
-  color: #71717a;
-}
-[data-theme='dark'] .menu-card.required:hover {
-  background: rgba(24, 24, 27, 0.78);
-  border-color: rgba(82, 82, 91, 0.72);
-}
-[data-theme='dark'] .menu-card.required.active:hover {
-  background: rgba(24, 24, 27, 0.92);
-  border-color: rgba(96, 165, 250, 0.58);
+.section-header h2 {
+  font-size: 14px;
 }
 
-/* 配置项卡片 - 暗色模式优化 */
-[data-theme='dark'] .config-item {
-  background: rgba(30, 30, 34, 0.5);
-  border-color: rgba(63, 63, 70, 0.6);
-}
-[data-theme='dark'] .config-item:hover {
-  border-color: #52525b;
-  background: rgba(39, 39, 42, 0.7);
-}
-[data-theme='dark'] .config-model-badge {
-  background: rgba(63, 63, 70, 0.5);
-  color: #a1a1aa;
+.setting-row {
+  padding: 11px 0;
 }
 
-/* 表单容器 */
-[data-theme='dark'] .config-form {
-  background: rgba(24, 24, 27, 0.6);
-  border-color: #52525b;
+.toggle-switch,
+.config-toggle {
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
 }
 
-/* 检查更新按钮 */
-[data-theme='dark'] .check-btn {
-  border-color: #52525b;
-  background: rgba(30, 30, 34, 0.6);
-}
-[data-theme='dark'] .check-btn:hover:not(:disabled) {
-  border-color: #818cf8;
-  background: rgba(49, 46, 89, 0.3);
-  color: #e4e4e7;
+.toggle-knob,
+.config-toggle-knob {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--color-toggle-knob);
 }
 
-/* 更新状态栏 - 暗色模式颜色优化 */
-[data-theme='dark'] .update-status-bar.available,
-[data-theme='dark'] .update-status-bar.downloaded {
-  background: rgba(96, 165, 250, 0.1);
-  color: #93c5fd;
-}
-[data-theme='dark'] .update-status-bar.not-available {
-  background: rgba(74, 222, 128, 0.08);
-  color: #86efac;
-}
-[data-theme='dark'] .update-status-bar.error {
-  background: rgba(252, 165, 165, 0.1);
-  color: #fca5a5;
-}
-[data-theme='dark'] .update-feedback {
-  background: rgba(24, 24, 27, 0.5);
-  border-color: rgba(63, 63, 70, 0.6);
+.toggle-switch.on .toggle-knob,
+.config-toggle.on .config-toggle-knob {
+  transform: translateX(16px);
 }
 
-/* 必选徽章 */
-[data-theme='dark'] .required-badge {
-  background: rgba(63, 63, 70, 0.6);
-  color: #71717a;
+.menu-grid {
+  gap: 10px;
 }
 
-/* 设置行分隔线 */
-[data-theme='dark'] .setting-row {
-  border-bottom-color: rgba(63, 63, 70, 0.4);
+.menu-card {
+  padding: 14px 10px;
+  background: var(--color-surface-soft);
 }
 
-/* GPU 状态卡片 - 暗色模式 */
-[data-theme='dark'] .gpu-status-card {
-  background: rgba(24, 24, 27, 0.5);
-  border-color: rgba(63, 63, 70, 0.6);
-}
-[data-theme='dark'] .gpu-status-card.available {
-  background: rgba(74, 222, 128, 0.06);
-  border-color: rgba(74, 222, 128, 0.2);
-}
-[data-theme='dark'] .gpu-status-card.available .gpu-status-icon {
-  background: rgba(74, 222, 128, 0.1);
-  color: #86efac;
+.menu-card.active {
+  background: var(--color-info-light);
+  border-color: var(--color-accent-border);
+  color: var(--color-active-bg);
+  box-shadow: none;
 }
 
-/* 操作按钮 hover */
-[data-theme='dark'] .config-action-btn:hover {
-  background: rgba(63, 63, 70, 0.5);
-  color: #d4d4d8;
+.menu-card.active .menu-card-icon {
+  background: var(--color-surface);
+  color: var(--color-accent-text);
 }
-[data-theme='dark'] .config-action-btn.delete:hover {
-  background: rgba(252, 165, 165, 0.1);
-  color: #fca5a5;
+
+.add-config-btn,
+.submit-btn,
+.update-action-btn {
+  background: var(--color-active-bg);
+  border-color: var(--color-active-bg);
+  box-shadow: var(--shadow-button);
 }
 </style>

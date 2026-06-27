@@ -6,12 +6,11 @@ WD Tagger — 基于 WaifuDiffusion 模型的图像自动打标
 import os
 import csv
 import json
-import urllib.request
-import ssl
 import numpy as np
 from PIL import Image
 
 from tasks.gpu_config import get_onnx_providers
+from tasks.hf_models import download_model_files, list_model_status, model_dir
 
 # 默认下载文件清单 (remote_path, local_filename)
 DEFAULT_FILES = [
@@ -120,50 +119,12 @@ def cleanup_cache():
 
 
 def _get_model_dir(model_key):
-    return os.path.join(MODEL_DIR, model_key)
+    return model_dir(MODEL_DIR, model_key)
 
 
 def list_models():
     """列出所有可用模型及其下载状态"""
-    result = []
-    for key, info in MODELS.items():
-        d = _get_model_dir(key)
-        files = _model_files(info)
-        downloaded = all(os.path.exists(os.path.join(d, local)) for _, local in files)
-        result.append({
-            "key": key,
-            "name": info["name"],
-            "repo": info["repo"],
-            "downloaded": downloaded,
-        })
-    return result
-
-
-def _download_file(url, target_path, progress_cb=None):
-    """下载单个文件，支持进度回调 progress_cb(downloaded_bytes, total_bytes)"""
-    ctx = ssl.create_default_context()
-    req = urllib.request.Request(url, headers={"User-Agent": "IMG_Editor/1.0"})
-    resp = urllib.request.urlopen(req, context=ctx)
-    total = int(resp.headers.get("Content-Length", 0))
-
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-    downloaded = 0
-    chunk_size = 1024 * 1024  # 1MB
-
-    with open(target_path + ".tmp", "wb") as f:
-        while True:
-            chunk = resp.read(chunk_size)
-            if not chunk:
-                break
-            f.write(chunk)
-            downloaded += len(chunk)
-            if progress_cb and total > 0:
-                progress_cb(downloaded, total)
-
-    # 下载完成后重命名
-    if os.path.exists(target_path):
-        os.remove(target_path)
-    os.rename(target_path + ".tmp", target_path)
+    return list_model_status(MODELS, MODEL_DIR, _model_files)
 
 
 def download_model(model_key, progress_cb=None):
@@ -171,33 +132,7 @@ def download_model(model_key, progress_cb=None):
     从 HuggingFace 下载模型文件
     progress_cb(step, total_steps, file_name, downloaded_bytes, total_bytes)
     """
-    if model_key not in MODELS:
-        return {"ok": False, "error": f"未知模型: {model_key}"}
-
-    info = MODELS[model_key]
-    repo_id = info["repo"]
-    target_dir = _get_model_dir(model_key)
-    os.makedirs(target_dir, exist_ok=True)
-
-    files_to_download = _model_files(info)
-    total_steps = len(files_to_download)
-
-    for step, (remote_path, local_name) in enumerate(files_to_download):
-        target_path = os.path.join(target_dir, local_name)
-        if os.path.exists(target_path):
-            if progress_cb:
-                progress_cb(step + 1, total_steps, local_name, 1, 1)
-            continue
-
-        url = f"https://hf-mirror.com/{repo_id}/resolve/main/{remote_path}"
-
-        def file_progress(downloaded, total, _fn=local_name, _step=step):
-            if progress_cb:
-                progress_cb(_step + 1, total_steps, _fn, downloaded, total)
-
-        _download_file(url, target_path, progress_cb=file_progress)
-
-    return {"ok": True}
+    return download_model_files(model_key, MODELS, MODEL_DIR, _model_files, progress_cb=progress_cb)
 
 
 def _load_tags_csv(path):

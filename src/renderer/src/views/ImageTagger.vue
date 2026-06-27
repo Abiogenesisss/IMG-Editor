@@ -5,7 +5,7 @@ import { useGridObserver } from '../composables/useGridObserver'
 import FolderRow from '../components/FolderRow.vue'
 import IconButton from '../components/IconButton.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
-import { ChevronLeft, ChevronRight, Tags, X } from 'lucide-vue-next'
+import { ChevronDown, ChevronLeft, ChevronRight, Tags, X } from 'lucide-vue-next'
 
 const downloading = ref(false)
 const downloadInfo = ref('')
@@ -492,20 +492,13 @@ const showTagPanel = ref(true)
             @click.stop="!processingAction && (modelDropOpen = !modelDropOpen)"
           >
             <span class="custom-select-value">{{ selectedModelLabel }}</span>
-            <svg
+            <ChevronDown
               class="custom-select-arrow"
               :class="{ open: modelDropOpen }"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
+              :size="12"
+              :stroke-width="2.5"
+              aria-hidden="true"
+            />
             <Transition name="dropdown">
               <div v-if="modelDropOpen" class="custom-select-list">
                 <div
@@ -745,21 +738,13 @@ const showTagPanel = ref(true)
             >
               <span class="tp-chip-name">{{ tagName }}</span>
               <span class="tp-chip-count">{{ count }}</span>
-              <svg
+              <X
                 class="tp-chip-del"
                 title="从所有图片中删除此标签"
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.5"
-                stroke-linecap="round"
+                :size="12"
+                :stroke-width="2.5"
                 @click.stop="removeTagFromAll(tagName)"
-              >
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
+              />
             </span>
           </div>
           <div v-if="sortedTagList.length === 0" class="tp-empty">暂无标签</div>
@@ -898,19 +883,7 @@ const showTagPanel = ref(true)
                 @click="removeTagFromEditing(tag)"
               >
                 {{ tag }}
-                <svg
-                  class="chip-x"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
+                <X class="chip-x" :size="12" :stroke-width="2.5" aria-hidden="true" />
               </span>
               <span v-if="editingTagsList.length === 0" class="chips-empty">暂无标签</span>
             </div>
@@ -1206,8 +1179,8 @@ const showTagPanel = ref(true)
   right: 0;
   padding: 3px 6px;
   font-size: 10px;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.6);
+  color: var(--color-overlay-text);
+  background: var(--color-overlay-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1707,5 +1680,76 @@ const showTagPanel = ref(true)
 .bar-icon-btn.active {
   color: var(--color-info);
   background: var(--color-info-light);
+}
+
+.tag-error-close {
+  font-size: 14px;
+}
+
+.threshold-bar {
+  gap: 12px 16px;
+  min-height: 32px;
+}
+
+.toggle-switch {
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+}
+
+.toggle-knob {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+.custom-select {
+  height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.custom-select-list {
+  box-shadow: none;
+}
+
+.dirty-dot {
+  border-radius: 999px;
+}
+
+.tp-header,
+.editor-header {
+  padding: 8px 10px;
+}
+
+.tp-title,
+.editor-filename {
+  font-size: 12px;
+}
+
+.tag-panel,
+.tag-editor-panel {
+  width: 340px;
+}
+
+.custom-select-list {
+  box-shadow: var(--shadow-md);
+}
+
+.tp-chip.active,
+.custom-tag-add,
+.tp-batch-run {
+  background: var(--color-active-bg);
+  border-color: var(--color-active-bg);
+  color: var(--color-on-accent);
+}
+
+.tp-tag-chip.filtered,
+.tp-tag-chip.has-tag,
+.bar-icon-btn.active {
+  background: var(--color-info-light);
+  color: var(--color-active-bg);
+  border-color: var(--color-accent-border);
 }
 </style>

@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import ImageGenerate from '../views/ImageGenerate.vue'
 
 const routes = [
   {
@@ -31,9 +32,19 @@ const routes = [
     component: () => import('../views/ImageTagger.vue')
   },
   {
+    path: '/aesthetic',
+    name: 'ImageAesthetic',
+    component: () => import('../views/ImageAesthetic.vue')
+  },
+  {
     path: '/caption',
     name: 'ImageCaption',
     component: () => import('../views/ImageCaption.vue')
+  },
+  {
+    path: '/generate',
+    name: 'ImageGenerate',
+    component: ImageGenerate
   },
   {
     path: '/workflow',

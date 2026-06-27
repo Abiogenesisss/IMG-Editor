@@ -233,18 +233,16 @@ async function chooseFolder(field) {
 .workflow-node {
   width: 282px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--color-surface);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-xs);
   color: var(--color-text);
   overflow: visible;
 }
 
 .workflow-node.selected {
   border-color: var(--color-info);
-  box-shadow:
-    0 0 0 2px var(--color-info-light),
-    0 12px 28px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--shadow-glow);
 }
 
 .node-head {
@@ -252,7 +250,7 @@ async function chooseFolder(field) {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 9px 10px;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -269,7 +267,7 @@ async function chooseFolder(field) {
 }
 
 .node-title {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -312,7 +310,7 @@ async function chooseFolder(field) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 9px 10px;
 }
 
 .param-field {
@@ -389,18 +387,18 @@ async function chooseFolder(field) {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  padding: 8px 12px 0;
+  padding: 8px 10px 0;
 }
 
 .output-list {
-  padding: 0 12px 10px;
+  padding: 0 10px 9px;
   justify-content: flex-end;
 }
 
 .port-chip {
   max-width: 100%;
   padding: 2px 6px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: var(--color-surface-hover);
   color: var(--color-text-muted);
   font-size: 10px;
@@ -415,7 +413,7 @@ async function chooseFolder(field) {
 }
 
 .node-message {
-  margin: 0 12px 8px;
+  margin: 0 10px 8px;
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
@@ -426,20 +424,20 @@ async function chooseFolder(field) {
 }
 
 .node-progress {
-  margin: 0 12px 8px;
+  margin: 0 10px 8px;
 }
 
 .progress-track {
   position: relative;
-  height: 6px;
-  border-radius: var(--radius-sm);
+  height: 3px;
+  border-radius: 999px;
   overflow: hidden;
   background: var(--color-surface-hover);
 }
 
 .progress-fill {
   height: 100%;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   background: var(--color-info);
   transition: width 0.18s ease;
 }
@@ -483,7 +481,7 @@ async function chooseFolder(field) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 8px 10px;
 }
 
 .status-pill {
@@ -491,7 +489,7 @@ async function chooseFolder(field) {
   align-items: center;
   height: 20px;
   padding: 0 7px;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   background: var(--color-surface-hover);
   color: var(--color-text-muted);
   font-size: 11px;
@@ -530,10 +528,5 @@ async function chooseFolder(field) {
 
 .output-handle {
   right: -6px;
-}
-
-[data-theme='dark'] .workflow-node {
-  background: rgba(32, 32, 36, 0.96);
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
 }
 </style>

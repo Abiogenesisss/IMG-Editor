@@ -5,6 +5,7 @@ import { join, extname, dirname, basename } from 'path'
 import { spawn, spawnSync } from 'child_process'
 import { randomBytes } from 'crypto'
 import { pathToFileURL } from 'url'
+import { Blob } from 'buffer'
 import { grantLocalFileAccess } from './localFileAccess'
 import { forceStopTunnel, registerTunnelIPC, stopTunnel } from './tunnelManager'
 
@@ -68,6 +69,9 @@ const PYTHON_ENDPOINTS = new Set([
   '/tagger-models',
   '/tagger-download',
   '/tagger-tag',
+  '/deepghs-models',
+  '/deepghs-download',
+  '/deepghs-analyze',
   '/upscale',
   '/preview-upscale',
   '/upscale-models',
@@ -540,6 +544,446 @@ async function migrateApiConfigs(legacyConfigs) {
     return { migrated: false, configs: [] }
   }
   return { migrated: true, configs: await writeApiConfigs(configs) }
+}
+
+function imageGenerationDefaultsDir() {
+  return join(app.getPath('userData'), 'generated_images')
+}
+
+function isGptImageModel(config = {}) {
+  const value = `${config.model || ''} ${config.name || ''}`.toLowerCase()
+  return /gpt[-_\s]?image|gpt[-_\s]?img|gpt.*\bimg\b/.test(value)
+}
+
+function isNanoBananaModel(config = {}) {
+  const value = `${config.model || ''} ${config.name || ''} ${config.endpoint || ''}`.toLowerCase()
+  return /nano[-_\s]?banana|gemini.*image|flash-image|pro-image/.test(value)
+}
+
+function resolveImageProvider(config = {}) {
+  if (isGptImageModel(config)) return 'gpt'
+  if (isNanoBananaModel(config)) return 'nanobanana'
+  return ''
+}
+
+function trimTrailingSlash(value) {
+  return String(value || '').replace(/\/+$/, '')
+}
+
+function resolveOpenAIImageEndpoint(endpoint) {
+  const raw = trimTrailingSlash(endpoint || 'https://api.openai.com/v1')
+  if (/\/images\/edits$/i.test(raw)) {
+    return raw.replace(/\/images\/edits$/i, '/images/generations')
+  }
+  if (/\/images\/generations$/i.test(raw)) return raw
+  if (/\/v\d+$/i.test(raw)) return `${raw}/images/generations`
+  try {
+    const url = new URL(raw)
+    if (url.pathname === '/' || url.pathname === '') {
+      return `${raw}/v1/images/generations`
+    }
+  } catch {
+    /* use as a base path */
+  }
+  return `${raw}/images/generations`
+}
+
+function resolveOpenAIImageEditEndpoint(endpoint) {
+  const raw = trimTrailingSlash(endpoint || 'https://api.openai.com/v1')
+  if (/\/images\/generations$/i.test(raw)) {
+    return raw.replace(/\/images\/generations$/i, '/images/edits')
+  }
+  if (/\/images\/edits$/i.test(raw)) return raw
+  if (/\/v\d+$/i.test(raw)) return `${raw}/images/edits`
+  try {
+    const url = new URL(raw)
+    if (url.pathname === '/' || url.pathname === '') {
+      return `${raw}/v1/images/edits`
+    }
+  } catch {
+    /* use as a base path */
+  }
+  return `${raw}/images/edits`
+}
+
+function resolveGeminiInteractionsEndpoint(endpoint) {
+  const raw = trimTrailingSlash(endpoint || 'https://generativelanguage.googleapis.com/v1beta')
+  if (/\/interactions$/i.test(raw)) return raw
+  return `${raw}/interactions`
+}
+
+function normalizeImageCount(value) {
+  const count = Number.parseInt(value, 10)
+  if (!Number.isFinite(count)) return 1
+  return Math.max(1, Math.min(count, 4))
+}
+
+function sanitizeFilenameSegment(value, fallback = 'image') {
+  const reservedChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+  const cleaned = String(value || fallback)
+    .split('')
+    .map((char) => (reservedChars.has(char) || char.charCodeAt(0) < 32 ? '_' : char))
+    .join('')
+    .replace(/\s+/g, '_')
+    .replace(/\.+$/g, '')
+    .slice(0, 70)
+  return cleaned || fallback
+}
+
+function imageGenerationTimestamp() {
+  const d = new Date()
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+}
+
+function extensionFromMime(mimeType, fallback = 'png') {
+  const mime = String(mimeType || '').toLowerCase()
+  if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg'
+  if (mime.includes('webp')) return 'webp'
+  if (mime.includes('gif')) return 'gif'
+  if (mime.includes('avif')) return 'avif'
+  return fallback
+}
+
+function mimeFromImagePath(filePath) {
+  switch (extname(filePath).toLowerCase()) {
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg'
+    case '.webp':
+      return 'image/webp'
+    case '.gif':
+      return 'image/gif'
+    case '.avif':
+      return 'image/avif'
+    default:
+      return 'image/png'
+  }
+}
+
+function detectImageMime(buffer, fallback = 'image/png') {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return fallback
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return 'image/jpeg'
+  if (buffer.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return 'image/png'
+  }
+  if (
+    buffer.slice(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.slice(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return 'image/webp'
+  }
+  if (buffer.slice(0, 3).toString('ascii') === 'GIF') return 'image/gif'
+  return fallback
+}
+
+async function readReferenceImages(imagePaths = []) {
+  const uniquePaths = [...new Set((Array.isArray(imagePaths) ? imagePaths : []).filter(Boolean))]
+  const refs = []
+  for (const filePath of uniquePaths.slice(0, 10)) {
+    const fileStat = await stat(filePath)
+    if (!fileStat.isFile()) continue
+    if (!isImageFileName(filePath)) continue
+    const buffer = await readFile(filePath)
+    refs.push({
+      path: filePath,
+      name: basename(filePath),
+      buffer,
+      base64: buffer.toString('base64'),
+      mimeType: detectImageMime(buffer, mimeFromImagePath(filePath))
+    })
+  }
+  return refs
+}
+
+function parseDataUrl(value) {
+  const match = String(value || '').match(/^data:([^;,]+)?(?:;[^,]*)?;base64,(.+)$/i)
+  if (!match) return null
+  return {
+    mimeType: match[1] || 'image/png',
+    data: match[2]
+  }
+}
+
+function normalizeBase64Image(data, mimeType = 'image/png') {
+  const dataUrl = parseDataUrl(data)
+  if (dataUrl) return dataUrl
+  return { data: String(data || ''), mimeType }
+}
+
+async function readJsonResponse(response) {
+  const text = await response.text()
+  let data = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    data = null
+  }
+
+  if (!response.ok) {
+    const message =
+      data?.error?.message || data?.error || data?.message || text || `HTTP ${response.status}`
+    throw new Error(typeof message === 'string' ? message : JSON.stringify(message))
+  }
+
+  return data || {}
+}
+
+function collectOpenAIImages(payload = {}) {
+  return (Array.isArray(payload.data) ? payload.data : [])
+    .map((item) => {
+      if (item?.b64_json) return normalizeBase64Image(item.b64_json, 'image/png')
+      if (item?.url) return { url: item.url }
+      return null
+    })
+    .filter(Boolean)
+}
+
+function collectGeminiImages(value, output = []) {
+  if (!value || typeof value !== 'object') return output
+
+  const inlineData = value.inlineData || value.inline_data
+  if (inlineData?.data) {
+    output.push(normalizeBase64Image(inlineData.data, inlineData.mimeType || inlineData.mime_type))
+  }
+
+  const outputImage = value.output_image || value.outputImage
+  if (outputImage?.data) {
+    output.push(
+      normalizeBase64Image(outputImage.data, outputImage.mimeType || outputImage.mime_type)
+    )
+  }
+
+  if (
+    value.data &&
+    (String(value.mimeType || value.mime_type || '').startsWith('image/') || value.type === 'image')
+  ) {
+    output.push(normalizeBase64Image(value.data, value.mimeType || value.mime_type))
+  }
+
+  for (const child of Array.isArray(value) ? value : Object.values(value)) {
+    collectGeminiImages(child, output)
+  }
+
+  return output
+}
+
+async function imageSourceToBuffer(source) {
+  if (source.data) {
+    const buffer = Buffer.from(source.data, 'base64')
+    return {
+      buffer,
+      mimeType: detectImageMime(buffer, source.mimeType || 'image/png')
+    }
+  }
+
+  if (source.url) {
+    const response = await fetch(source.url)
+    if (!response.ok) throw new Error(`Image download failed: HTTP ${response.status}`)
+    const buffer = Buffer.from(await response.arrayBuffer())
+    return {
+      buffer,
+      mimeType: detectImageMime(buffer, response.headers.get('content-type') || 'image/png')
+    }
+  }
+
+  throw new Error('No image data returned')
+}
+
+async function saveGeneratedImage(outputDir, source, meta) {
+  const { buffer, mimeType } = await imageSourceToBuffer(source)
+  if (buffer.length === 0) throw new Error('Generated image is empty')
+
+  const ext = extensionFromMime(mimeType, meta.outputFormat || 'png')
+  const baseName = sanitizeFilenameSegment(`${meta.model}_${meta.prompt}`, 'generated')
+  const filePath = await getAvailablePath(
+    join(outputDir, `${imageGenerationTimestamp()}_${baseName}.${ext}`),
+    (counter) => join(outputDir, `${imageGenerationTimestamp()}_${baseName}_${counter}.${ext}`)
+  )
+  await writeFile(filePath, buffer)
+  return {
+    path: filePath,
+    url: toLocalFileUrl(filePath),
+    name: basename(filePath),
+    mimeType,
+    bytes: buffer.length
+  }
+}
+
+async function requestGptImage(config, options, controller) {
+  const references = Array.isArray(options.references) ? options.references : []
+  if (references.length > 0) {
+    const form = new FormData()
+    form.append('model', config.model)
+    form.append('prompt', options.prompt)
+    form.append('n', String(normalizeImageCount(options.count)))
+    if (options.size) form.append('size', options.size)
+    if (options.quality) form.append('quality', options.quality)
+    if (options.outputFormat) form.append('output_format', options.outputFormat)
+    if (options.background) form.append('background', options.background)
+    for (const ref of references) {
+      form.append('image[]', new Blob([ref.buffer], { type: ref.mimeType }), ref.name)
+    }
+
+    const response = await fetch(resolveOpenAIImageEditEndpoint(config.endpoint), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`
+      },
+      body: form,
+      signal: controller.signal
+    })
+    const payload = await readJsonResponse(response)
+    return collectOpenAIImages(payload)
+  }
+
+  const response = await fetch(resolveOpenAIImageEndpoint(config.endpoint), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: config.model,
+      prompt: options.prompt,
+      n: normalizeImageCount(options.count),
+      size: options.size || '1024x1024',
+      quality: options.quality || 'auto',
+      output_format: options.outputFormat || 'png',
+      background: options.background || 'auto'
+    }),
+    signal: controller.signal
+  })
+  const payload = await readJsonResponse(response)
+  return collectOpenAIImages(payload)
+}
+
+async function requestNanoBananaImage(config, options, controller) {
+  const references = Array.isArray(options.references) ? options.references : []
+  const input = [{ type: 'text', text: options.prompt }]
+  for (const ref of references) {
+    input.push({
+      type: 'image',
+      inline_data: {
+        mime_type: ref.mimeType,
+        data: ref.base64
+      }
+    })
+  }
+  const isOfficialGoogleEndpoint = /(^|\.)googleapis\.com$/i.test(
+    (() => {
+      try {
+        return new URL(resolveGeminiInteractionsEndpoint(config.endpoint)).hostname
+      } catch {
+        return ''
+      }
+    })()
+  )
+  const authHeaders = isOfficialGoogleEndpoint
+    ? { 'x-goog-api-key': config.apiKey }
+    : { 'x-goog-api-key': config.apiKey, Authorization: `Bearer ${config.apiKey}` }
+  const response = await fetch(resolveGeminiInteractionsEndpoint(config.endpoint), {
+    method: 'POST',
+    headers: {
+      ...authHeaders,
+      'Content-Type': 'application/json',
+      'Api-Revision': '2026-05-20'
+    },
+    body: JSON.stringify({
+      model: config.model,
+      input,
+      response_format: {
+        type: 'image',
+        aspect_ratio: options.aspectRatio || '1:1',
+        image_size: options.imageSize || '1K'
+      }
+    }),
+    signal: controller.signal
+  })
+  const payload = await readJsonResponse(response)
+  return collectGeminiImages(payload)
+}
+
+async function generateImage(event, options = {}) {
+  const prompt = String(options.prompt || '').trim()
+  if (!prompt) return { success: false, error: 'Prompt 不能为空' }
+
+  const configs = await readApiConfigs()
+  const config = configs.find((item) => item.id === String(options.configId || ''))
+  if (!config || config.enabled === false) {
+    return { success: false, error: '请选择已启用的 API 配置' }
+  }
+  if (!config.apiKey) return { success: false, error: '当前 API 配置缺少 API Key' }
+
+  const provider = resolveImageProvider(config)
+  if (!provider) return { success: false, error: '仅支持 GPT Image 和 Nano Banana 系列模型' }
+
+  const outputDir = String(options.outputDir || '').trim() || imageGenerationDefaultsDir()
+  await mkdir(outputDir, { recursive: true })
+  await grantLocalFileAccess(outputDir)
+  const references = await readReferenceImages(options.referenceImages)
+
+  const taskId = ++taskIdCounter
+  const controller = new AbortController()
+  activeControllers.set(taskId, controller)
+  const count = normalizeImageCount(options.count)
+  const results = []
+
+  try {
+    const iterations = provider === 'nanobanana' ? count : 1
+    for (let index = 0; index < iterations; index += 1) {
+      event.sender.send('task-progress', {
+        scope: 'image-generate',
+        done: index,
+        total: count,
+        current: config.model
+      })
+
+      const sources =
+        provider === 'gpt'
+          ? await requestGptImage(config, { ...options, prompt, count, references }, controller)
+          : await requestNanoBananaImage(
+              config,
+              { ...options, prompt, count: 1, references },
+              controller
+            )
+
+      for (const source of sources) {
+        if (results.length >= count) break
+        const item = await saveGeneratedImage(outputDir, source, {
+          model: config.model,
+          prompt,
+          outputFormat: options.outputFormat
+        })
+        results.push({ ...item, model: config.model, provider })
+      }
+    }
+
+    event.sender.send('task-progress', {
+      scope: 'image-generate',
+      done: results.length,
+      total: count,
+      current: config.model
+    })
+
+    if (results.length === 0) {
+      return { success: false, error: '接口未返回图片数据', output_dir: outputDir, results }
+    }
+
+    return {
+      success: true,
+      output_dir: outputDir,
+      count: results.length,
+      results
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return { success: false, aborted: true, output_dir: outputDir, results }
+    }
+    return { success: false, error: err.message || '生图失败', output_dir: outputDir, results }
+  } finally {
+    activeControllers.delete(taskId)
+  }
 }
 
 let taskIdCounter = 0
@@ -1342,6 +1786,8 @@ export function registerIPC() {
     migrateApiConfigs(legacyConfigs)
   )
 
+  ipcMain.handle('generate-image', generateImage)
+
   ipcMain.handle('select-folder', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showOpenDialog(win, {
@@ -1351,6 +1797,31 @@ export function registerIPC() {
     const folderPath = result.filePaths[0]
     await grantLocalFileAccess(folderPath)
     return folderPath
+  })
+
+  ipcMain.handle('select-image-files', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        {
+          name: 'Images',
+          extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif']
+        }
+      ]
+    })
+    if (result.canceled) return []
+    const files = []
+    for (const filePath of result.filePaths) {
+      if (!isImageFileName(filePath)) continue
+      await grantLocalFileAccess(dirname(filePath))
+      files.push({
+        name: basename(filePath),
+        path: filePath,
+        url: toLocalFileUrl(filePath)
+      })
+    }
+    return files
   })
 
   ipcMain.handle('save-text-file', async (event, options = {}) => {

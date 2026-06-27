@@ -446,8 +446,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 8px;
+  gap: 8px;
+  padding-bottom: 5px;
   flex-shrink: 0;
 }
 
@@ -467,7 +467,7 @@ onBeforeUnmount(() => {
   gap: 7px;
   min-height: 22px;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
@@ -486,12 +486,12 @@ onBeforeUnmount(() => {
 .panel-title {
   gap: 7px;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .toolbar-actions {
-  gap: 8px;
+  gap: 6px;
 }
 
 .tunnel-layout {
@@ -500,30 +500,31 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(420px, 1fr) minmax(360px, 0.8fr) 360px;
   grid-template-rows: auto minmax(180px, 1fr);
-  gap: 12px;
-  padding-top: 10px;
+  gap: 7px;
+  padding-top: 6px;
 }
 
 .tunnel-panel {
   min-width: 0;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--color-surface);
-  padding: 12px;
+  box-shadow: var(--shadow-xs);
+  padding: 8px;
 }
 
 .main-panel,
 .mapping-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 7px;
 }
 
 .status-panel {
   grid-row: span 2;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 7px;
 }
 
 .log-panel {
@@ -541,7 +542,7 @@ onBeforeUnmount(() => {
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   color: var(--color-text-secondary);
   font-size: 12px;
 }
@@ -556,21 +557,21 @@ onBeforeUnmount(() => {
   background: var(--color-input-bg);
   color: var(--color-text);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12px;
   outline: none;
 }
 
 .text-input,
 .port-input {
-  height: 34px;
-  padding: 0 9px;
+  height: 30px;
+  padding: 0 8px;
 }
 
 .config-input {
-  min-height: 92px;
+  min-height: 64px;
   resize: vertical;
-  padding: 9px 10px;
-  line-height: 1.5;
+  padding: 7px 8px;
+  line-height: 1.42;
 }
 
 .text-input:focus,
@@ -606,9 +607,9 @@ onBeforeUnmount(() => {
 .action-btn {
   gap: 6px;
   height: var(--ui-action-button-height);
-  min-width: 92px;
+  min-width: 86px;
   padding: 0 12px;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .action-btn.primary {
@@ -625,8 +626,8 @@ onBeforeUnmount(() => {
 
 .secondary-btn {
   align-self: flex-start;
-  height: 32px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   font-size: 12px;
 }
 
@@ -635,8 +636,8 @@ onBeforeUnmount(() => {
 }
 
 .icon-btn {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   color: var(--color-text-muted);
 }
@@ -664,14 +665,14 @@ onBeforeUnmount(() => {
 .mapping-table {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .mapping-head,
 .mapping-row {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) 34px;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
 }
 
@@ -694,14 +695,14 @@ onBeforeUnmount(() => {
 .status-line {
   gap: 8px;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: 999px;
   background: var(--color-text-muted);
 }
 
@@ -731,7 +732,7 @@ onBeforeUnmount(() => {
 .mapped-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .mapped-title,
@@ -742,8 +743,8 @@ onBeforeUnmount(() => {
 }
 
 .mapped-row {
-  gap: 8px;
-  min-height: 30px;
+  gap: 6px;
+  min-height: 28px;
   color: var(--color-text-secondary);
   font-size: 12px;
 }
@@ -770,15 +771,15 @@ onBeforeUnmount(() => {
 .command-box {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
 .command-box code {
   display: block;
-  max-height: 120px;
+  max-height: 100px;
   overflow: auto;
-  padding: 8px;
+  padding: 6px 8px;
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
@@ -793,7 +794,7 @@ onBeforeUnmount(() => {
 .log-list {
   flex: 1;
   min-height: 0;
-  margin-top: 10px;
+  margin-top: 7px;
   overflow: auto;
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-sm);
@@ -842,11 +843,6 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-[data-theme='dark'] .tunnel-panel {
-  background: rgba(39, 39, 42, 0.72);
-  border-color: rgba(63, 63, 70, 0.8);
-}
-
 @media (max-width: 1180px) {
   .tunnel-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -858,5 +854,17 @@ onBeforeUnmount(() => {
     grid-row: auto;
     grid-column: auto;
   }
+}
+
+.action-btn.primary {
+  background: var(--color-active-bg);
+  border-color: var(--color-active-bg);
+  color: var(--color-on-accent);
+  box-shadow: var(--shadow-button);
+}
+
+.action-btn.primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
 }
 </style>

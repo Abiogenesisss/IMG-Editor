@@ -233,14 +233,14 @@ const dedupMap = ref(new Map()) // file path → { group, similarity, qualityAct
 const dedupActive = ref(false)
 
 const GROUP_COLORS = [
-  '#3b82f6',
-  '#ef4444',
-  '#f59e0b',
-  '#10b981',
-  '#8b5cf6',
-  '#ec4899',
-  '#06b6d4',
-  '#f97316'
+  'var(--color-data-1)',
+  'var(--color-data-2)',
+  'var(--color-data-3)',
+  'var(--color-data-4)',
+  'var(--color-data-5)',
+  'var(--color-data-6)',
+  'var(--color-data-7)',
+  'var(--color-data-8)'
 ]
 
 function getGroupColor(groupId) {
@@ -969,7 +969,7 @@ function clearProcessFolder() {
 
 .ratio-sep {
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--color-text-muted);
 }
 
 /* 聚类面板扩展宽度 */
@@ -997,7 +997,7 @@ function clearProcessFolder() {
 
 .panel-hint {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   line-height: 1.4;
 }
 
@@ -1014,7 +1014,7 @@ function clearProcessFolder() {
 
 .panel-label {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   flex-shrink: 0;
 }
 
@@ -1029,7 +1029,7 @@ function clearProcessFolder() {
   background: var(--color-error-light);
   border: 1px solid var(--color-error-border);
   color: var(--color-error);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .task-error-close {
@@ -1050,7 +1050,7 @@ function clearProcessFolder() {
 }
 
 .image-card.dedup-remove-card {
-  box-shadow: inset 0 0 0 2px rgba(220, 38, 38, 0.55);
+  box-shadow: inset 0 0 0 2px var(--color-error-border);
 }
 
 /* 去重徽章 */
@@ -1060,9 +1060,9 @@ function clearProcessFolder() {
   left: 6px;
   padding: 2px 6px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  color: #fff;
+  color: var(--color-on-accent);
   z-index: 2;
   pointer-events: none;
   line-height: 1.3;
@@ -1074,23 +1074,23 @@ function clearProcessFolder() {
   left: 6px;
   padding: 2px 6px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1.3;
-  color: #fff;
+  color: var(--color-on-accent);
   z-index: 2;
   pointer-events: none;
 }
 
 .quality-badge--keep {
-  background: rgba(16, 185, 129, 0.92);
+  background: var(--color-success);
 }
 
 .quality-badge--remove {
-  background: rgba(220, 38, 38, 0.94);
+  background: var(--color-error);
 }
 
 .quality-badge--review {
-  background: rgba(245, 158, 11, 0.94);
+  background: var(--color-warning);
 }
 </style>

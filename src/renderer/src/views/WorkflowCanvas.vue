@@ -199,12 +199,32 @@ const NODE_DEFS = {
     category: '处理节点',
     inputs: FILE_IN,
     outputs: FILE_OUT,
-    params: { hash_thresh: 10, phash_thresh: 10, color_thresh: 0.5, move_rejected_to_del: true },
+    params: {
+      hash_thresh: 10,
+      phash_thresh: 10,
+      color_thresh: 0.5,
+      cleanup_strategy: 'quality',
+      move_rejected_to_del: true
+    },
     fields: [
       { key: 'hash_thresh', label: 'Hash 阈值', type: 'number', min: 0 },
       { key: 'phash_thresh', label: 'PHash 阈值', type: 'number', min: 0 },
       { key: 'color_thresh', label: '颜色阈值', type: 'number', min: 0, max: 1, step: 0.05 },
-      { key: 'move_rejected_to_del', label: '移除项', type: 'checkbox', hint: '移动到 del 文件夹' }
+      {
+        key: 'cleanup_strategy',
+        label: '清理策略',
+        type: 'select',
+        options: [
+          { value: 'quality', label: '按质量建议' },
+          { value: 'first', label: '每组保留首张' }
+        ]
+      },
+      {
+        key: 'move_rejected_to_del',
+        label: '自动清理',
+        type: 'checkbox',
+        hint: '建议删除项移动到 del 文件夹'
+      }
     ]
   },
   'process-alpha': {
@@ -1026,10 +1046,11 @@ async function collectOutputs(result, sourceFiles, folder) {
 
 async function moveFilesToDel(files, label = '移入 del') {
   const targets = unique(files)
-  if (!targets.length) return { moved: 0, failed: 0 }
+  if (!targets.length) return { moved: 0, failed: 0, failures: [] }
 
   let moved = 0
   let failed = 0
+  const failures = []
   for (let index = 0; index < targets.length; index += 1) {
     if (abortRequested.value) throw new Error('任务已停止')
     const file = targets[index]
@@ -1045,7 +1066,10 @@ async function moveFilesToDel(files, label = '移入 del') {
     })
     const result = await window.api.deleteImage(file)
     if (result?.success) moved += 1
-    else failed += 1
+    else {
+      failed += 1
+      failures.push({ file, error: result?.error || '移动失败' })
+    }
   }
 
   patchNode(currentNodeId.value, {
@@ -1058,7 +1082,7 @@ async function moveFilesToDel(files, label = '移入 del') {
     },
     message: `${label} ${targets.length}/${targets.length}`
   })
-  return { moved, failed }
+  return { moved, failed, failures }
 }
 
 async function runTransform(endpoint, payload, sourceFiles, folder, fallback, metadata = {}) {
@@ -1146,30 +1170,73 @@ async function runNode(node, inputMap, root) {
         color_thresh: params.color_thresh ?? 0.5
       })
       assertSuccess(result, '去重失败')
-      const byFile = new Map((result.results || []).map((item) => [item.file, item]))
+      const dedupItems = result.results || []
+      const byFile = new Map(dedupItems.map((item) => [item.file, item]))
+      const groupedItems = dedupItems.filter(
+        (item) => item.group !== null && item.group !== undefined
+      )
+      const groupCount = new Set(groupedItems.map((item) => item.group)).size
+      const cleanupStrategy = params.cleanup_strategy || 'quality'
+      const reviewCount = groupedItems.filter((item) => item.quality_action === 'review').length
       const seenGroups = new Set()
       const kept = []
       const rejected = []
-      for (const file of inputFiles) {
-        const item = byFile.get(file)
-        if (!item || item.group === null || item.group === undefined) {
-          kept.push(file)
-          continue
+
+      if (cleanupStrategy === 'first') {
+        for (const file of inputFiles) {
+          const item = byFile.get(file)
+          if (!item || item.group === null || item.group === undefined) {
+            kept.push(file)
+            continue
+          }
+          if (!seenGroups.has(item.group)) {
+            seenGroups.add(item.group)
+            kept.push(file)
+          } else {
+            rejected.push(file)
+          }
         }
-        if (!seenGroups.has(item.group)) {
-          seenGroups.add(item.group)
-          kept.push(file)
-        } else {
-          rejected.push(file)
+      } else {
+        const removeFiles = new Set(
+          groupedItems.filter((item) => item.quality_action === 'remove').map((item) => item.file)
+        )
+        for (const file of inputFiles) {
+          if (removeFiles.has(file)) {
+            rejected.push(file)
+          } else {
+            kept.push(file)
+          }
         }
       }
-      let deleted = { moved: 0, failed: 0 }
+
+      let deleted = { moved: 0, failed: 0, failures: [] }
       if (params.move_rejected_to_del !== false) {
-        deleted = await moveFilesToDel(rejected, '移入 del')
+        deleted = await moveFilesToDel(
+          rejected,
+          cleanupStrategy === 'quality' ? '清理低质重复图' : '移入 del'
+        )
+      }
+
+      const strategyText =
+        cleanupStrategy === 'quality'
+          ? `建议清理 ${rejected.length} 张，待确认 ${reviewCount} 张`
+          : `过滤重复 ${rejected.length} 张`
+      const moveText =
+        params.move_rejected_to_del !== false
+          ? `移入 del ${deleted.moved} 张`
+          : `仅从输出排除 ${rejected.length} 张，未移动文件`
+      const failedText = deleted.failed ? `，失败 ${deleted.failed} 张` : ''
+      if (deleted.failed) {
+        const firstFailure = deleted.failures?.[0]
+        if (firstFailure) {
+          addLog(`清理失败示例：${basenameText(firstFailure.file)} - ${firstFailure.error}`)
+        } else {
+          addLog(`清理失败 ${deleted.failed} 张`)
+        }
       }
       return {
         files: makeFileValue(kept, inputMetadata),
-        message: `保留 ${kept.length} 张，移入 del ${deleted.moved} 张${deleted.failed ? `，失败 ${deleted.failed} 张` : ''}`
+        message: `重复组 ${groupCount} 个，${strategyText}，保留 ${kept.length} 张，${moveText}${failedText}`
       }
     }
     case 'process-alpha':
@@ -1542,9 +1609,10 @@ async function runWorkflow() {
         if (value) values.set(`${node.id}:${output.id}`, value)
       }
       const count = result.files?.files?.length
+      const resultMessage = result.message || (count != null ? `输出 ${count} 张` : '完成')
       patchNode(nodeId, {
         status: 'done',
-        message: result.message || (count != null ? `输出 ${count} 张` : '完成'),
+        message: resultMessage,
         metrics: count != null ? { count } : {},
         progress: {
           done: count || 1,
@@ -1554,7 +1622,7 @@ async function runWorkflow() {
           current: ''
         }
       })
-      addLog(`完成：${node.data.label}${count != null ? `（${count} 张）` : ''}`)
+      addLog(`完成：${node.data.label} - ${resultMessage}`)
     }
     currentNodeId.value = ''
     addLog('工作流执行完成')
@@ -1761,7 +1829,7 @@ function resetStatus() {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
   overflow: hidden;
   padding: 0;
 }
@@ -1770,11 +1838,11 @@ function resetStatus() {
   position: relative;
   display: grid;
   grid-template-columns: minmax(360px, auto) auto minmax(300px, 1fr);
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  padding: 0 0 8px;
+  padding: 0 0 9px;
   border: none;
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: transparent;
   box-shadow: none;
 }
@@ -1798,7 +1866,7 @@ function resetStatus() {
 
 .tool-select,
 .tool-input {
-  height: 32px;
+  height: 30px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-input-bg);
@@ -1829,7 +1897,7 @@ function resetStatus() {
 
 .icon-tool,
 .primary-tool {
-  height: 32px;
+  height: 30px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
@@ -1846,7 +1914,7 @@ function resetStatus() {
 }
 
 .icon-tool {
-  width: 32px;
+  width: 30px;
   padding: 0;
 }
 
@@ -1886,13 +1954,13 @@ function resetStatus() {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 286px;
-  gap: 10px;
+  gap: 9px;
 }
 
 .flow-canvas {
   min-height: 0;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--color-background);
   overflow: hidden;
 }
@@ -1908,7 +1976,7 @@ function resetStatus() {
 }
 
 :deep(.vue-flow__controls) {
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
+  box-shadow: none;
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
@@ -1918,21 +1986,21 @@ function resetStatus() {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--color-surface);
   overflow: hidden;
 }
 
 .panel-title {
-  padding: 11px 12px 7px;
+  padding: 9px 10px 7px;
   font-size: 12px;
   font-weight: 600;
   color: var(--color-text-secondary);
 }
 
 .state-card {
-  margin: 0 12px 8px;
-  padding: 10px;
+  margin: 0 10px 8px;
+  padding: 9px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
   color: var(--color-text);
@@ -1963,7 +2031,7 @@ function resetStatus() {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 12px 12px;
+  padding: 0 10px 10px;
 }
 
 .empty-log {
@@ -1995,15 +2063,15 @@ function resetStatus() {
 
 .node-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-dropdown);
   width: 240px;
   max-height: min(620px, calc(100vh - 60px));
   overflow-y: auto;
   padding: 8px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--color-surface);
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.2);
+  box-shadow: var(--shadow-md);
 }
 
 .menu-group + .menu-group {
@@ -2037,12 +2105,6 @@ function resetStatus() {
   color: var(--color-text);
 }
 
-[data-theme='dark'] .run-panel,
-[data-theme='dark'] .node-menu {
-  background: rgba(32, 32, 36, 0.88);
-  border-color: rgba(63, 63, 70, 0.72);
-}
-
 @media (max-width: 1100px) {
   .workflow-toolbar {
     grid-template-columns: 1fr;
@@ -2060,5 +2122,17 @@ function resetStatus() {
   .run-panel {
     max-height: 220px;
   }
+}
+
+.primary-tool {
+  background: var(--color-active-bg);
+  border-color: var(--color-active-bg);
+  color: var(--color-on-accent);
+  box-shadow: var(--shadow-button);
+}
+
+.primary-tool:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
 }
 </style>

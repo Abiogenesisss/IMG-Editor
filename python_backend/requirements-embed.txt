@@ -1,0 +1,10 @@
+Pillow
+requests
+gallery-dl
+numpy
+opencv-python-headless
+onnxruntime-gpu
+scikit-learn
+google-genai
+anthropic
+openai
