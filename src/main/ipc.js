@@ -1824,6 +1824,32 @@ export function registerIPC() {
     return files
   })
 
+  ipcMain.handle('select-upload-sources', async (event, mode = 'file') => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const pickFolder = mode === 'folder'
+    const result = await dialog.showOpenDialog(win, {
+      properties: [pickFolder ? 'openDirectory' : 'openFile', 'multiSelections']
+    })
+    if (result.canceled) return []
+
+    const items = []
+    for (const filePath of result.filePaths) {
+      try {
+        const info = await stat(filePath)
+        await grantLocalFileAccess(info.isDirectory() ? filePath : dirname(filePath))
+        items.push({
+          name: basename(filePath),
+          path: filePath,
+          isDirectory: info.isDirectory(),
+          size: info.isFile() ? info.size : 0
+        })
+      } catch {
+        /* ignore inaccessible selections */
+      }
+    }
+    return items
+  })
+
   ipcMain.handle('save-text-file', async (event, options = {}) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showSaveDialog(win, {

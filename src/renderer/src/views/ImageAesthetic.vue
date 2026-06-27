@@ -16,13 +16,13 @@ const CLASS_LABELS = {
 }
 
 const AESTHETIC_LABELS = {
-  masterpiece: '神作',
-  best: '极佳',
-  great: '优秀',
-  good: '良好',
-  normal: '普通',
-  low: '低质',
-  worst: '极低'
+  masterpiece: 'masterpiece',
+  best: 'best',
+  great: 'great',
+  good: 'good',
+  normal: 'normal',
+  low: 'low',
+  worst: 'worst'
 }
 
 const DEFAULT_ALLOWED_CLASSES = ['3d', 'bangumi', 'comic', 'illustration']
@@ -387,7 +387,7 @@ onMounted(() => {
         <button
           v-for="label in classLabels"
           :key="label"
-          :class="['class-chip', { active: isAllowed(label) }]"
+          :class="['class-chip', 'class-' + label, { active: isAllowed(label) }]"
           :disabled="!!processingAction"
           @click="toggleAllowedClass(label)"
         >
@@ -510,14 +510,18 @@ onMounted(() => {
 
           <span
             v-if="getResult(img)?.ok"
-            :class="['class-badge', { rejected: getResult(img)?.class_passed === false }]"
+            :class="[
+              'class-badge',
+              'class-' + getResult(img).class_label,
+              { rejected: getResult(img)?.class_passed === false }
+            ]"
           >
             {{ displayClass(getResult(img).class_label) }}
           </span>
 
           <span
             v-if="getResult(img)?.ok && getResult(img)?.aesthetic_label"
-            class="aesthetic-label-badge"
+            :class="['aesthetic-label-badge', 'aesthetic-' + getResult(img).aesthetic_label]"
           >
             {{ displayAesthetic(getResult(img).aesthetic_label) }}
           </span>
@@ -634,6 +638,71 @@ onMounted(() => {
   box-shadow: var(--shadow-button);
 }
 
+.class-chip.class-3d {
+  border-color: rgba(124, 58, 237, 0.45);
+  background: rgba(124, 58, 237, 0.08);
+  color: #6d28d9;
+}
+
+.class-chip.class-bangumi {
+  border-color: rgba(236, 72, 153, 0.45);
+  background: rgba(236, 72, 153, 0.08);
+  color: #be185d;
+}
+
+.class-chip.class-comic {
+  border-color: rgba(249, 115, 22, 0.45);
+  background: rgba(249, 115, 22, 0.08);
+  color: #c2410c;
+}
+
+.class-chip.class-illustration {
+  border-color: rgba(14, 165, 233, 0.45);
+  background: rgba(14, 165, 233, 0.08);
+  color: #0369a1;
+}
+
+.class-chip.class-not_painting {
+  border-color: rgba(100, 116, 139, 0.45);
+  background: rgba(100, 116, 139, 0.08);
+  color: #475569;
+}
+
+.class-chip.class-3d.active,
+.class-badge.class-3d {
+  border-color: #7c3aed;
+  background: #7c3aed;
+  color: #fff;
+}
+
+.class-chip.class-bangumi.active,
+.class-badge.class-bangumi {
+  border-color: #ec4899;
+  background: #ec4899;
+  color: #fff;
+}
+
+.class-chip.class-comic.active,
+.class-badge.class-comic {
+  border-color: #f97316;
+  background: #f97316;
+  color: #fff;
+}
+
+.class-chip.class-illustration.active,
+.class-badge.class-illustration {
+  border-color: #0ea5e9;
+  background: #0ea5e9;
+  color: #fff;
+}
+
+.class-chip.class-not_painting.active,
+.class-badge.class-not_painting {
+  border-color: #64748b;
+  background: #64748b;
+  color: #fff;
+}
+
 .class-chip:disabled {
   opacity: 0.58;
   cursor: not-allowed;
@@ -708,20 +777,48 @@ onMounted(() => {
 }
 
 .class-badge {
-  right: 25px;
-  top: 6px;
-  max-width: calc(100% - 78px);
+  right: 6px;
+  bottom: 6px;
+  max-width: calc(100% - 18px);
   background: var(--color-overlay-soft);
 }
 
 .class-badge.rejected {
-  background: var(--color-text-muted);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42);
 }
 
 .aesthetic-label-badge {
   left: 6px;
   bottom: 6px;
   background: var(--color-success);
+}
+
+.aesthetic-label-badge.aesthetic-masterpiece {
+  background: #14b8a6;
+}
+
+.aesthetic-label-badge.aesthetic-best {
+  background: #22c55e;
+}
+
+.aesthetic-label-badge.aesthetic-great {
+  background: #3b82f6;
+}
+
+.aesthetic-label-badge.aesthetic-good {
+  background: #06b6d4;
+}
+
+.aesthetic-label-badge.aesthetic-normal {
+  background: #64748b;
+}
+
+.aesthetic-label-badge.aesthetic-low {
+  background: #f59e0b;
+}
+
+.aesthetic-label-badge.aesthetic-worst {
+  background: #ef4444;
 }
 
 @media (max-width: 1280px) {

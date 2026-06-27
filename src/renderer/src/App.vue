@@ -318,7 +318,7 @@ onUnmounted(() => {
   width: 24px;
   height: 24px;
   object-fit: contain;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
 }
 
 .brand-title {

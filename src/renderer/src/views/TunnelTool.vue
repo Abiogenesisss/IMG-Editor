@@ -1,6 +1,17 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Cable, Clipboard, Play, Plus, RotateCcw, Square, Terminal, Trash2 } from 'lucide-vue-next'
+import {
+  Cable,
+  Clipboard,
+  FolderUp,
+  Play,
+  Plus,
+  RotateCcw,
+  Square,
+  Terminal,
+  Trash2,
+  Upload
+} from 'lucide-vue-next'
 import { useLocalStorage } from '../composables/useLocalStorage'
 
 defineOptions({ name: 'TunnelTool' })
@@ -18,6 +29,7 @@ const sshCommand = useLocalStorage('tunnel-ssh-command', '')
 const mappings = useLocalStorage('tunnel-port-mappings', [makeMapping('6006', '6006')], {
   type: 'json'
 })
+const uploadRemoteDir = useLocalStorage('tunnel-upload-remote-dir', '/root')
 
 if (!Array.isArray(mappings.value) || mappings.value.length === 0) {
   mappings.value = [makeMapping('6006', '6006')]
@@ -27,6 +39,17 @@ const sshPassword = ref('')
 const configText = ref('')
 const actionError = ref('')
 const copiedPort = ref('')
+const uploadSources = ref([])
+const uploading = ref(false)
+const uploadProgress = ref({
+  running: false,
+  done: 0,
+  total: 0,
+  current: '',
+  uploadedBytes: 0,
+  totalBytes: 0
+})
+const uploadMessage = ref('')
 const tunnelStatus = ref({
   state: 'stopped',
   running: false,
@@ -83,6 +106,24 @@ const visibleError = computed(
 const canStart = computed(
   () => sshCommand.value.trim() && !portValidationError.value && !isBusy.value
 )
+const canUpload = computed(
+  () =>
+    uploadSources.value.length > 0 &&
+    uploadRemoteDir.value.trim() &&
+    (tunnelStatus.value.state === 'running' || sshCommand.value.trim()) &&
+    !uploading.value &&
+    !isBusy.value
+)
+const uploadPercent = computed(() => {
+  if (!uploadProgress.value.total) return 0
+  return Math.round((uploadProgress.value.done / uploadProgress.value.total) * 100)
+})
+const uploadSourceSummary = computed(() => {
+  if (!uploadSources.value.length) return '未选择文件'
+  const folders = uploadSources.value.filter((item) => item.isDirectory).length
+  const files = uploadSources.value.length - folders
+  return `已选 ${uploadSources.value.length} 项${files ? `，文件 ${files}` : ''}${folders ? `，文件夹 ${folders}` : ''}`
+})
 const logs = computed(() => tunnelStatus.value.logs || [])
 
 let removeTunnelListener = null
@@ -213,10 +254,86 @@ async function copyLocalUrl(port) {
   }
 }
 
+function formatBytes(value) {
+  const size = Number(value || 0)
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
+  return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
+async function chooseUploadSources(mode = 'file') {
+  actionError.value = ''
+  uploadMessage.value = ''
+  try {
+    const items = await window.api.selectUploadSources(mode)
+    if (!items?.length) return
+    const existing = new Set(uploadSources.value.map((item) => item.path))
+    const merged = [...uploadSources.value]
+    for (const item of items) {
+      if (!existing.has(item.path)) {
+        existing.add(item.path)
+        merged.push(item)
+      }
+    }
+    uploadSources.value = merged
+  } catch (err) {
+    actionError.value = errorMessage(err, '选择上传文件失败')
+  }
+}
+
+function removeUploadSource(path) {
+  uploadSources.value = uploadSources.value.filter((item) => item.path !== path)
+}
+
+function clearUploadSources() {
+  uploadSources.value = []
+  uploadMessage.value = ''
+}
+
+async function uploadFiles() {
+  if (!canUpload.value) return
+  actionError.value = ''
+  uploadMessage.value = ''
+  uploading.value = true
+  uploadProgress.value = {
+    running: true,
+    done: 0,
+    total: 0,
+    current: '',
+    uploadedBytes: 0,
+    totalBytes: 0
+  }
+
+  try {
+    const result = await window.api.uploadTunnelFiles({
+      ...getStartPayload(),
+      remoteDir: uploadRemoteDir.value.trim(),
+      sources: uploadSources.value.map((item) => item.path)
+    })
+
+    if (result.success) {
+      uploadMessage.value = `上传完成：${result.uploaded || 0} 个文件 -> ${result.remoteDir || uploadRemoteDir.value}`
+    } else {
+      uploadMessage.value = result.uploaded
+        ? `已上传 ${result.uploaded} 个文件，失败 ${result.failed || 0} 个`
+        : ''
+      actionError.value = result.error || '上传失败'
+    }
+  } catch (err) {
+    actionError.value = errorMessage(err, '上传失败')
+  } finally {
+    uploading.value = false
+  }
+}
+
 onMounted(() => {
   refreshStatus().catch(() => {})
   removeTunnelListener = window.api.onTunnelEvent((event) => {
     if (event?.status) syncStatus(event.status)
+    if (event?.type === 'upload-progress' && event.progress) {
+      uploadProgress.value = { ...uploadProgress.value, ...event.progress }
+    }
   })
 })
 
@@ -381,6 +498,104 @@ onBeforeUnmount(() => {
         </button>
       </section>
 
+      <section class="tunnel-panel upload-panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <FolderUp :size="16" />
+            <span>文件上传</span>
+          </div>
+          <div class="upload-actions">
+            <button
+              class="secondary-btn"
+              type="button"
+              :disabled="uploading"
+              @click="chooseUploadSources('file')"
+            >
+              <Plus :size="14" />
+              选文件
+            </button>
+            <button
+              class="secondary-btn"
+              type="button"
+              :disabled="uploading"
+              @click="chooseUploadSources('folder')"
+            >
+              <FolderUp :size="14" />
+              选文件夹
+            </button>
+            <button
+              class="icon-btn danger-text"
+              type="button"
+              title="清空"
+              :disabled="uploading || uploadSources.length === 0"
+              @click="clearUploadSources"
+            >
+              <Trash2 :size="14" />
+            </button>
+          </div>
+        </div>
+
+        <div class="upload-top">
+          <label class="form-field upload-dir-field">
+            <span>远程目录</span>
+            <input
+              v-model="uploadRemoteDir"
+              class="text-input"
+              type="text"
+              spellcheck="false"
+              placeholder="/root/workspace"
+              :disabled="uploading"
+            />
+          </label>
+          <button
+            class="action-btn primary"
+            type="button"
+            :disabled="!canUpload"
+            @click="uploadFiles"
+          >
+            <Upload :size="14" />
+            {{ uploading ? '上传中' : '上传' }}
+          </button>
+        </div>
+
+        <div class="upload-source-list">
+          <div v-for="item in uploadSources" :key="item.path" class="upload-source-row">
+            <span class="upload-source-name" :title="item.path">{{ item.name }}</span>
+            <small>{{ item.isDirectory ? '文件夹' : formatBytes(item.size) }}</small>
+            <button
+              class="icon-btn danger-text"
+              type="button"
+              title="移除"
+              :disabled="uploading"
+              @click="removeUploadSource(item.path)"
+            >
+              <Trash2 :size="13" />
+            </button>
+          </div>
+          <div v-if="uploadSources.length === 0" class="upload-empty">
+            选择文件或文件夹后上传到远程 Jupyter 工作目录
+          </div>
+        </div>
+
+        <div class="upload-footer">
+          <span class="upload-summary">{{ uploadSourceSummary }}</span>
+          <span v-if="uploadProgress.total" class="upload-progress-text">
+            {{ uploadProgress.done }} / {{ uploadProgress.total }}，{{ uploadPercent }}%
+          </span>
+          <span v-if="uploadProgress.totalBytes" class="upload-progress-text">
+            {{ formatBytes(uploadProgress.uploadedBytes) }} /
+            {{ formatBytes(uploadProgress.totalBytes) }}
+          </span>
+          <span v-if="uploadProgress.current" class="upload-current">{{
+            uploadProgress.current
+          }}</span>
+          <span v-if="uploadMessage" class="copy-hint">{{ uploadMessage }}</span>
+        </div>
+        <div v-if="uploading || uploadProgress.total" class="upload-progress-track">
+          <span :style="{ width: uploadPercent + '%' }"></span>
+        </div>
+      </section>
+
       <aside class="tunnel-panel status-panel">
         <div class="status-line">
           <span :class="['status-dot', stateClass]"></span>
@@ -478,7 +693,11 @@ onBeforeUnmount(() => {
 .panel-title,
 .panel-head,
 .status-line,
-.mapped-row {
+.mapped-row,
+.upload-actions,
+.upload-top,
+.upload-footer,
+.upload-source-row {
   display: flex;
   align-items: center;
 }
@@ -494,23 +713,28 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
+.upload-actions {
+  gap: 6px;
+}
+
 .tunnel-layout {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(360px, 0.8fr) 360px;
-  grid-template-rows: auto minmax(180px, 1fr);
-  gap: 7px;
+  grid-template-columns: minmax(380px, 1fr) minmax(360px, 1fr) 340px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
   padding-top: 6px;
 }
 
 .tunnel-panel {
   min-width: 0;
+  min-height: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   box-shadow: var(--shadow-xs);
-  padding: 8px;
+  padding: 10px;
 }
 
 .main-panel,
@@ -520,18 +744,43 @@ onBeforeUnmount(() => {
   gap: 7px;
 }
 
-.status-panel {
-  grid-row: span 2;
+/* 左列：SSH 登录(行1) + 端口映射(行2) */
+.main-panel {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.mapping-panel {
+  grid-column: 1;
+  grid-row: 2;
+  overflow: auto;
+}
+
+/* 中列：文件上传(行1) + 日志(行2) */
+.upload-panel {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   gap: 7px;
 }
 
 .log-panel {
-  grid-column: span 2;
+  grid-column: 2;
+  grid-row: 2;
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* 右列：状态面板贯穿全高 */
+.status-panel {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
 }
 
 .panel-head {
@@ -626,6 +875,7 @@ onBeforeUnmount(() => {
 
 .secondary-btn {
   align-self: flex-start;
+  gap: 6px;
   height: 28px;
   padding: 0 10px;
   font-size: 12px;
@@ -690,6 +940,109 @@ onBeforeUnmount(() => {
   width: 15px;
   height: 15px;
   accent-color: var(--color-active-bg);
+}
+
+.upload-top {
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.upload-top .action-btn {
+  height: 30px;
+  flex-shrink: 0;
+}
+
+.upload-dir-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-source-list {
+  min-height: 88px;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-soft);
+}
+
+.upload-source-row {
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.upload-source-row:last-child {
+  border-bottom: none;
+}
+
+.upload-source-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.upload-source-row small {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.upload-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 86px;
+  padding: 16px 14px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.upload-footer {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-height: 20px;
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.upload-summary {
+  color: var(--color-text-secondary);
+}
+
+.upload-progress-text,
+.upload-current {
+  color: var(--color-text-muted);
+}
+
+.upload-current {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-progress-track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-border-light);
+}
+
+.upload-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-active-bg);
+  transition: width 0.18s ease;
 }
 
 .status-line {
@@ -773,11 +1126,13 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 5px;
   min-width: 0;
+  margin-top: auto;
 }
 
 .command-box code {
   display: block;
-  max-height: 100px;
+  min-height: 64px;
+  max-height: 220px;
   overflow: auto;
   padding: 6px 8px;
   border: 1px solid var(--color-border-light);
@@ -846,13 +1201,21 @@ onBeforeUnmount(() => {
 @media (max-width: 1180px) {
   .tunnel-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto minmax(180px, 1fr);
+    grid-template-rows: auto;
+    grid-auto-rows: auto;
   }
 
-  .status-panel,
-  .log-panel {
+  .main-panel,
+  .mapping-panel,
+  .upload-panel,
+  .log-panel,
+  .status-panel {
+    grid-column: 1;
     grid-row: auto;
-    grid-column: auto;
+  }
+
+  .log-panel {
+    min-height: 240px;
   }
 }
 

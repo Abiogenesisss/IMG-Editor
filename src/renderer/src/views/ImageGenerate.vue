@@ -416,6 +416,8 @@ onBeforeUnmount(() => {
             </label>
           </template>
         </div>
+
+        <div class="support-note">仅支持nano banana/GPT image系列</div>
       </aside>
 
       <main class="result-panel">
@@ -702,6 +704,15 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 5px;
   min-width: 0;
+}
+
+.support-note {
+  margin-top: auto;
+  padding-top: 8px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
 }
 
 .result-panel {

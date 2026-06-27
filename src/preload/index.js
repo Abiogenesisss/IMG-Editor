@@ -16,6 +16,7 @@ const api = {
   generateImage: (options) => ipcRenderer.invoke('generate-image', options),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   selectImageFiles: () => ipcRenderer.invoke('select-image-files'),
+  selectUploadSources: (mode) => ipcRenderer.invoke('select-upload-sources', mode),
   saveTextFile: (options) => ipcRenderer.invoke('save-text-file', options),
   resolveOutputDir: (inputDir) => ipcRenderer.invoke('resolve-output-dir', inputDir),
   readImages: (folderPath) => ipcRenderer.invoke('read-images', folderPath),
@@ -32,6 +33,7 @@ const api = {
   getTunnelStatus: () => ipcRenderer.invoke('tunnel-status'),
   startTunnel: (config) => ipcRenderer.invoke('tunnel-start', config),
   stopTunnel: () => ipcRenderer.invoke('tunnel-stop'),
+  uploadTunnelFiles: (config) => ipcRenderer.invoke('tunnel-upload', config),
   onTunnelEvent: (callback) => {
     const handler = (_event, data) => callback(data)
     ipcRenderer.on('tunnel-event', handler)

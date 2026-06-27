@@ -1,5 +1,7 @@
 import { BrowserWindow } from 'electron'
+import { readdir, stat } from 'fs/promises'
 import net from 'net'
+import { basename, join, posix as pathPosix } from 'path'
 import { Client as SshClient } from 'ssh2'
 
 const TUNNEL_LOG_LIMIT = 160
@@ -33,6 +35,7 @@ let tunnelServers = []
 const tunnelSockets = new Set()
 const tunnelStreams = new Set()
 const tunnelLogs = []
+let uploadRunning = false
 let tunnelState = {
   state: 'stopped',
   pid: null,
@@ -266,8 +269,7 @@ function sshOptionConsumesValue(token) {
   return false
 }
 
-function buildSshConnectionConfig(config = {}) {
-  const mappings = normalizeTunnelMappings(config.mappings)
+function buildSshBaseConfig(config = {}) {
   const tokens = tokenizeCommand(extractSshCommand(config.command))
   if (!tokens.length || !isSshCommand(tokens[0])) {
     throw new Error('SSH 指令必须以 ssh 或 ssh.exe 开头')
@@ -325,8 +327,14 @@ function buildSshConnectionConfig(config = {}) {
 
   return {
     preview: `${ssh.username}@${ssh.host}:${ssh.port}`,
-    mappings,
     ssh
+  }
+}
+
+function buildSshConnectionConfig(config = {}) {
+  return {
+    ...buildSshBaseConfig(config),
+    mappings: normalizeTunnelMappings(config.mappings)
   }
 }
 
@@ -385,6 +393,284 @@ async function openForwardServers(client, mappings) {
   }
 }
 
+function emitUploadProgress(progress = {}) {
+  emitTunnelEvent('upload-progress', { progress })
+}
+
+function connectSshClient(ssh) {
+  return new Promise((resolve, reject) => {
+    const client = new SshClient()
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try {
+        client.destroy()
+      } catch {
+        /* ignore */
+      }
+      reject(new Error('SSH 连接超时'))
+    }, ssh.readyTimeout || 12000)
+
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      client.off('error', onError)
+      client.off('close', onClose)
+      fn(value)
+    }
+    const onError = (err) => finish(reject, err)
+    const onClose = () => finish(reject, new Error('SSH 连接已关闭'))
+
+    client.once('ready', () => finish(resolve, client))
+    client.once('error', onError)
+    client.once('close', onClose)
+    client.connect(ssh)
+  })
+}
+
+function openSftp(client) {
+  return new Promise((resolve, reject) => {
+    client.sftp((err, sftp) => {
+      if (err) reject(err)
+      else resolve(sftp)
+    })
+  })
+}
+
+function sftpStat(sftp, remotePath) {
+  return new Promise((resolve, reject) => {
+    sftp.stat(remotePath, (err, attrs) => {
+      if (err) reject(err)
+      else resolve(attrs)
+    })
+  })
+}
+
+function sftpMkdir(sftp, remotePath) {
+  return new Promise((resolve, reject) => {
+    sftp.mkdir(remotePath, (err) => {
+      if (err) reject(err)
+      else resolve()
+    })
+  })
+}
+
+function sftpFastPut(sftp, localPath, remotePath) {
+  return new Promise((resolve, reject) => {
+    sftp.fastPut(localPath, remotePath, (err) => {
+      if (err) reject(err)
+      else resolve()
+    })
+  })
+}
+
+function normalizeRemoteDir(value) {
+  const text = String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+  if (!text) throw new Error('请填写远程目录')
+  return text || '/'
+}
+
+async function ensureRemoteDir(sftp, remoteDir) {
+  const normalized = normalizeRemoteDir(remoteDir)
+  if (normalized === '/' || normalized === '.') return
+
+  let current = normalized.startsWith('/') ? '/' : ''
+  for (const part of normalized.split('/').filter(Boolean)) {
+    current = current === '/' ? `/${part}` : current ? `${current}/${part}` : part
+    try {
+      const attrs = await sftpStat(sftp, current)
+      if (!attrs?.isDirectory?.()) throw new Error(`${current} 不是目录`)
+    } catch {
+      try {
+        await sftpMkdir(sftp, current)
+      } catch (err) {
+        const attrs = await sftpStat(sftp, current).catch(() => null)
+        if (!attrs?.isDirectory?.()) throw err
+      }
+    }
+  }
+}
+
+async function collectLocalUploadEntries(sourcePaths) {
+  const roots = [...new Set((Array.isArray(sourcePaths) ? sourcePaths : []).map(String))]
+    .map((item) => item.trim())
+    .filter(Boolean)
+  if (roots.length === 0) throw new Error('请选择要上传的文件或文件夹')
+
+  const dirs = []
+  const files = []
+
+  async function visit(localPath, relativePath) {
+    const info = await stat(localPath)
+    if (info.isDirectory()) {
+      dirs.push({ localPath, relativePath })
+      const entries = await readdir(localPath, { withFileTypes: true })
+      for (const entry of entries) {
+        await visit(join(localPath, entry.name), pathPosix.join(relativePath, entry.name))
+      }
+      return
+    }
+    if (info.isFile()) {
+      files.push({
+        localPath,
+        relativePath,
+        size: info.size
+      })
+    }
+  }
+
+  for (const sourcePath of roots) {
+    await visit(sourcePath, basename(sourcePath))
+  }
+
+  return {
+    dirs,
+    files,
+    totalBytes: files.reduce((sum, item) => sum + item.size, 0)
+  }
+}
+
+async function getUploadClient(config) {
+  if (tunnelClient && tunnelState.state === 'running') {
+    return {
+      client: tunnelClient,
+      temporary: false,
+      preview: tunnelState.command || 'active tunnel'
+    }
+  }
+
+  const { preview, ssh } = buildSshBaseConfig(config)
+  appendTunnelLog('info', `连接 SSH 上传：${preview}`)
+  const client = await connectSshClient(ssh)
+  appendTunnelLog('success', `SSH 已认证：${preview}`)
+  return { client, temporary: true, preview }
+}
+
+export async function uploadTunnelFiles(config = {}) {
+  if (uploadRunning) throw new Error('已有上传任务正在运行')
+
+  const remoteDir = normalizeRemoteDir(config.remoteDir)
+  const { dirs, files, totalBytes } = await collectLocalUploadEntries(config.sources)
+  let client = null
+  let sftp = null
+  let temporary = false
+  const results = []
+
+  uploadRunning = true
+  emitUploadProgress({
+    running: true,
+    done: 0,
+    total: files.length,
+    current: '',
+    totalBytes,
+    uploadedBytes: 0
+  })
+  appendTunnelLog('info', `开始上传 ${files.length} 个文件到 ${remoteDir}`)
+
+  try {
+    const uploadClient = await getUploadClient(config)
+    client = uploadClient.client
+    temporary = uploadClient.temporary
+    sftp = await openSftp(client)
+
+    await ensureRemoteDir(sftp, remoteDir)
+    for (const dir of dirs) {
+      await ensureRemoteDir(sftp, pathPosix.join(remoteDir, dir.relativePath))
+    }
+
+    let uploadedBytes = 0
+    for (let index = 0; index < files.length; index += 1) {
+      const item = files[index]
+      const remotePath = pathPosix.join(remoteDir, item.relativePath)
+      emitUploadProgress({
+        running: true,
+        done: index,
+        total: files.length,
+        current: item.relativePath,
+        totalBytes,
+        uploadedBytes
+      })
+
+      try {
+        await ensureRemoteDir(sftp, pathPosix.dirname(remotePath))
+        await sftpFastPut(sftp, item.localPath, remotePath)
+        uploadedBytes += item.size
+        results.push({
+          success: true,
+          source: item.localPath,
+          remotePath,
+          size: item.size
+        })
+        appendTunnelLog('success', `已上传：${item.relativePath}`)
+      } catch (err) {
+        results.push({
+          success: false,
+          source: item.localPath,
+          remotePath,
+          error: err.message || '上传失败'
+        })
+        appendTunnelLog('error', `上传失败：${item.relativePath}，${err.message || err}`)
+      } finally {
+        emitUploadProgress({
+          running: true,
+          done: index + 1,
+          total: files.length,
+          current: item.relativePath,
+          totalBytes,
+          uploadedBytes
+        })
+      }
+    }
+
+    const uploaded = results.filter((item) => item.success).length
+    const failed = results.length - uploaded
+    appendTunnelLog(
+      failed ? 'error' : 'success',
+      `上传完成：成功 ${uploaded}，失败 ${failed}，目录 ${remoteDir}`
+    )
+    return {
+      success: failed === 0,
+      uploaded,
+      failed,
+      total: files.length,
+      remoteDir,
+      results,
+      error: failed ? `上传完成，但有 ${failed} 个文件失败` : ''
+    }
+  } finally {
+    uploadRunning = false
+    emitUploadProgress({
+      running: false,
+      done: files.length,
+      total: files.length,
+      current: '',
+      totalBytes,
+      uploadedBytes: results
+        .filter((item) => item.success)
+        .reduce((sum, item) => sum + Number(item.size || 0), 0)
+    })
+    if (sftp?.end) {
+      try {
+        sftp.end()
+      } catch {
+        /* ignore */
+      }
+    }
+    if (temporary && client) {
+      try {
+        client.end()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 export function getTunnelStatus() {
   return tunnelSnapshot()
 }
@@ -412,6 +698,18 @@ export function registerTunnelIPC(ipcMain) {
         ...getTunnelStatus(),
         success: false,
         error: err.message || '隧道停止失败'
+      }
+    }
+  })
+
+  ipcMain.handle('tunnel-upload', async (_event, config = {}) => {
+    try {
+      return await uploadTunnelFiles(config)
+    } catch (err) {
+      appendTunnelLog('error', err.message || '上传失败')
+      return {
+        success: false,
+        error: err.message || '上传失败'
       }
     }
   })

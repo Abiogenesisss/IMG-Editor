@@ -1245,18 +1245,15 @@ const previewUrl = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-sm);
-  background: var(--color-info-light);
+  width: 32px;
+  height: 32px;
+  background: transparent;
   color: var(--color-info);
-  transition:
-    background 0.2s,
-    color 0.2s;
+  transition: color 0.2s;
 }
 
 .menu-card:not(.active) .menu-card-icon {
-  background: var(--color-surface-hover);
+  background: transparent;
   color: var(--color-text-muted);
 }
 
@@ -1332,7 +1329,7 @@ const previewUrl = computed(() => {
 }
 
 .menu-card.active .menu-card-icon {
-  background: var(--color-surface);
+  background: transparent;
   color: var(--color-accent-text);
 }
 
