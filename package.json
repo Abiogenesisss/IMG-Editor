@@ -1,7 +1,7 @@
 {
   "name": "img-editor",
   "version": "1.0.7",
-  "description": "An Electron application with Vue",
+  "description": "Desktop image dataset editor with an Electron/Vue UI and Python processing backend",
   "main": "./out/main/index.js",
   "author": "Abiogenesisss",
   "homepage": "https://github.com/Abiogenesisss/IMG-Editor",

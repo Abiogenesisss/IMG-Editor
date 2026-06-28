@@ -1,1 +1,5 @@
 * text=auto eol=lf
+
+# Bundled upstream runtime/model helpers. Keep GitHub language stats focused on first-party app code.
+python_backend/nunif/** linguist-vendored
+python_backend/waifu2x/** linguist-vendored
