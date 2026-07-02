@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import IconButton from './components/IconButton.vue'
 import { Copy, Minus, Moon, Square, Sun, X } from 'lucide-vue-next'
-import { mainNavItems, settingsNavItem } from './services/navigation'
+import { mainNavItems, settingsNavItem, thanksNavItem } from './services/navigation'
 
 const router = useRouter()
 const route = useRoute()
@@ -219,6 +219,15 @@ onUnmounted(() => {
             <span class="rail-tooltip">{{ theme === 'light' ? '深色模式' : '浅色模式' }}</span>
           </button>
           <button
+            :class="['rail-btn', 'rail-tool', { active: activeNav === thanksNavItem.path }]"
+            :title="thanksNavItem.label"
+            :aria-label="thanksNavItem.label"
+            @click="navigateTo(thanksNavItem.path)"
+          >
+            <component :is="thanksNavItem.icon" :size="18" :stroke-width="2.2" aria-hidden="true" />
+            <span class="rail-tooltip">{{ thanksNavItem.label }}</span>
+          </button>
+          <button
             :class="['rail-btn', 'rail-tool', { active: activeNav === settingsNavItem.path }]"
             :title="settingsNavItem.label"
             :aria-label="settingsNavItem.label"
@@ -296,7 +305,7 @@ onUnmounted(() => {
 .app-header {
   display: flex;
   align-items: center;
-  height: 42px;
+  height: 40px;
   padding: 0;
   background: var(--color-header-bg);
   border-bottom: 1px solid var(--color-border-light);
@@ -308,8 +317,8 @@ onUnmounted(() => {
 .header-brand {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 0 14px;
+  gap: 8px;
+  padding: 0 12px;
   height: 100%;
   -webkit-app-region: no-drag;
 }
@@ -384,9 +393,9 @@ onUnmounted(() => {
 }
 
 .app-rail {
-  width: 66px;
+  width: 60px;
   flex-shrink: 0;
-  padding: 14px 9px 12px;
+  padding: 14px 7px 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -424,8 +433,13 @@ onUnmounted(() => {
 
 .rail-btn {
   position: relative;
-  width: 44px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  max-width: 38px;
+  aspect-ratio: 1 / 1;
+  flex: 0 0 38px;
+  box-sizing: border-box;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
@@ -445,7 +459,7 @@ onUnmounted(() => {
   content: '';
   display: block;
   position: absolute;
-  left: -10px;
+  left: -8px;
   top: 50%;
   width: 3px;
   height: 18px;

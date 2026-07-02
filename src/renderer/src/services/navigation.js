@@ -1,5 +1,6 @@
 import {
   Cable,
+  CircleQuestionMark,
   Download,
   ImagePlus,
   Maximize2,
@@ -26,6 +27,12 @@ export const mainNavItems = [
 ]
 
 export const settingsNavItem = { path: '/settings', label: '设置', icon: Settings, required: true }
+export const thanksNavItem = {
+  path: '/thanks',
+  label: '特别鸣谢',
+  icon: CircleQuestionMark,
+  required: true
+}
 
 export const settingsMenuItems = [
   ...mainNavItems.map((item) => ({ ...item, required: false })),

@@ -10,14 +10,14 @@ const gptSizeOptions = [
   { value: '1024x1024', label: '1:1' },
   { value: '1536x1024', label: '3:2' },
   { value: '1024x1536', label: '2:3' },
-  { value: 'auto', label: 'Auto' }
+  { value: 'auto', label: '自动' }
 ]
 
 const qualityOptions = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' }
+  { value: 'auto', label: '自动' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' }
 ]
 
 const outputFormatOptions = [
@@ -27,9 +27,9 @@ const outputFormatOptions = [
 ]
 
 const backgroundOptions = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'opaque', label: 'Opaque' },
-  { value: 'transparent', label: 'Clear' }
+  { value: 'auto', label: '自动' },
+  { value: 'opaque', label: '不透明' },
+  { value: 'transparent', label: '透明' }
 ]
 
 const aspectOptions = [
@@ -156,7 +156,7 @@ async function generate() {
     return
   }
   if (!prompt.value.trim()) {
-    taskError.value = '请输入 Prompt'
+    taskError.value = '请输入提示词'
     return
   }
 
@@ -253,7 +253,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="api-field">
-        <label class="field-label">API</label>
+        <label class="field-label">接口</label>
         <select
           v-model="selectedApiId"
           class="tool-select"
@@ -311,12 +311,12 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <label class="prompt-label">Prompt</label>
+        <label class="prompt-label">提示词</label>
         <textarea
           v-model="prompt"
           class="prompt-input"
           :disabled="running"
-          placeholder="Describe the image you want..."
+          placeholder="描述你想生成的图片..."
         ></textarea>
 
         <div v-if="generationMode === 'image'" class="reference-block">
@@ -417,7 +417,7 @@ onBeforeUnmount(() => {
           </template>
         </div>
 
-        <div class="support-note">仅支持nano banana/GPT image系列</div>
+        <div class="support-note">仅支持 Nano Banana / GPT Image 系列</div>
       </aside>
 
       <main class="result-panel">

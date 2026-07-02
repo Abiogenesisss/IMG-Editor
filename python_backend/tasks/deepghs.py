@@ -121,11 +121,30 @@ def _target_size(session):
     return 384, 384
 
 
-def _preprocess(image_path, size):
-    img = Image.open(image_path).convert("RGBA")
+def _resize_for_model(img, size, letterbox=False):
+    if not letterbox:
+        return img.resize(size, Image.BILINEAR)
+
+    target_w, target_h = size
+    width, height = img.size
+    if width <= 0 or height <= 0:
+        return img.resize(size, Image.BILINEAR)
+
+    scale = min(target_w / width, target_h / height)
+    new_w = max(1, int(round(width * scale)))
+    new_h = max(1, int(round(height * scale)))
+    resized = img.resize((new_w, new_h), Image.BILINEAR)
+    canvas = Image.new("RGB", size, (255, 255, 255))
+    canvas.paste(resized, ((target_w - new_w) // 2, (target_h - new_h) // 2))
+    return canvas
+
+
+def _preprocess(image_path, size, letterbox=False):
+    with Image.open(image_path) as source:
+        img = source.convert("RGBA")
     bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
     bg.paste(img, mask=img)
-    img = bg.convert("RGB").resize(size, Image.BILINEAR)
+    img = _resize_for_model(bg.convert("RGB"), size, letterbox=letterbox)
 
     arr = np.asarray(img, dtype=np.float32) / 255.0
     arr = np.transpose(arr, (2, 0, 1))
@@ -133,13 +152,13 @@ def _preprocess(image_path, size):
     return np.expand_dims(arr.astype(np.float32), 0)
 
 
-def _predict_scores(model_key, image_path):
+def _predict_scores(model_key, image_path, letterbox=False):
     bundle = _load_model(model_key)
     session = bundle["session"]
     labels = bundle["labels"]
     input_name = session.get_inputs()[0].name
     output_name = session.get_outputs()[0].name
-    data = _preprocess(image_path, _target_size(session))
+    data = _preprocess(image_path, _target_size(session), letterbox=letterbox)
     output = session.run([output_name], {input_name: data})[0][0]
 
     scores = {}
@@ -157,6 +176,12 @@ def _top_label(scores):
     return label, float(scores[label])
 
 
+def _best_allowed_label(scores, allowed):
+    if not allowed:
+        return "", 0.0
+    return _top_label({label: score for label, score in scores.items() if label in allowed})
+
+
 def _aesthetic_score(scores):
     total = 0.0
     weight_sum = 0.0
@@ -171,15 +196,57 @@ def _aesthetic_score(scores):
     return round(total / weight_sum, 3)
 
 
+def _aesthetic_allows_class_fallback(label, score):
+    if score is None:
+        return False
+    if label in {"low", "worst"}:
+        return False
+    return float(score) >= 4.3
+
+
 def _round_scores(scores):
     return {label: round(float(score), 6) for label, score in scores.items()}
+
+
+def _as_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off"}
+    return bool(value)
+
+
+def _as_float(value, default):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if not np.isfinite(number):
+        return float(default)
+    return number
+
+
+def _normalize_allowed_classes(value):
+    if isinstance(value, str):
+        value = value.split(",")
+    return {str(item).strip() for item in (value or []) if str(item).strip()}
 
 
 def analyze_batch(files, classifier_model_key, aesthetic_model_key,
                   allowed_classes=None, class_threshold=0.0,
                   min_score=5.0, score_only_passed=True,
+                  letterbox_preprocess=False,
+                  relaxed_class_match=True, class_margin=0.18,
                   progress_cb=None, cancel_event=None):
-    allowed = set(allowed_classes or [])
+    allowed = _normalize_allowed_classes(allowed_classes)
+    threshold = max(0.0, _as_float(class_threshold, 0.0))
+    min_score_value = max(0.0, min(10.0, _as_float(min_score, 5.0)))
+    margin = max(0.0, _as_float(class_margin, 0.18))
+    score_only_passed = _as_bool(score_only_passed, True)
+    letterbox_preprocess = _as_bool(letterbox_preprocess, False)
+    relaxed_class_match = _as_bool(relaxed_class_match, True)
     total = len(files)
     results = []
 
@@ -188,12 +255,31 @@ def analyze_batch(files, classifier_model_key, aesthetic_model_key,
             break
 
         try:
-            class_scores = _predict_scores(classifier_model_key, file_path)
-            class_label, class_confidence = _top_label(class_scores)
-            class_passed = (
-                (not allowed or class_label in allowed)
-                and class_confidence >= float(class_threshold or 0)
+            class_scores = _predict_scores(
+                classifier_model_key, file_path, letterbox=letterbox_preprocess
             )
+            raw_class_label, raw_class_confidence = _top_label(class_scores)
+            class_label = raw_class_label
+            class_confidence = raw_class_confidence
+            class_passed = not allowed or (
+                raw_class_label in allowed and raw_class_confidence >= threshold
+            )
+
+            if allowed and not class_passed and relaxed_class_match:
+                allowed_label, allowed_confidence = _best_allowed_label(class_scores, allowed)
+                close_enough = (raw_class_confidence - allowed_confidence) <= margin
+                strong_enough = allowed_confidence >= max(threshold, 0.08)
+                if allowed_label and close_enough and strong_enough:
+                    class_label = allowed_label
+                    class_confidence = allowed_confidence
+                    class_passed = True
+                    class_fallback = "margin"
+                else:
+                    class_fallback = ""
+            else:
+                allowed_label = ""
+                allowed_confidence = 0.0
+                class_fallback = ""
 
             aesthetic_scores = {}
             aesthetic_label = ""
@@ -201,17 +287,48 @@ def analyze_batch(files, classifier_model_key, aesthetic_model_key,
             score = None
             low_score = False
 
-            if class_passed or not score_only_passed:
-                aesthetic_scores = _predict_scores(aesthetic_model_key, file_path)
+            should_score = (
+                class_passed
+                or not score_only_passed
+                or (allowed and not class_passed and relaxed_class_match)
+            )
+            if should_score:
+                aesthetic_scores = _predict_scores(
+                    aesthetic_model_key, file_path, letterbox=letterbox_preprocess
+                )
                 aesthetic_label, aesthetic_confidence = _top_label(aesthetic_scores)
                 score = _aesthetic_score(aesthetic_scores)
-                low_score = score < float(min_score)
+                low_score = score < min_score_value
+
+                if allowed and not class_passed and relaxed_class_match:
+                    if not allowed_label:
+                        allowed_label, allowed_confidence = _best_allowed_label(class_scores, allowed)
+                    allowed_strong_enough = allowed_confidence >= max(threshold, 0.05)
+                    if (
+                        allowed_label
+                        and allowed_strong_enough
+                        and _aesthetic_allows_class_fallback(aesthetic_label, score)
+                    ):
+                        class_label = allowed_label
+                        class_confidence = allowed_confidence
+                        class_passed = True
+                        class_fallback = "aesthetic"
+
+                if not class_passed and score_only_passed:
+                    aesthetic_scores = {}
+                    aesthetic_label = ""
+                    aesthetic_confidence = 0.0
+                    score = None
+                    low_score = False
 
             results.append({
                 "file": file_path,
                 "ok": True,
                 "class_label": class_label,
                 "class_confidence": round(class_confidence, 6),
+                "raw_class_label": raw_class_label,
+                "raw_class_confidence": round(raw_class_confidence, 6),
+                "class_fallback": class_fallback,
                 "class_scores": _round_scores(class_scores),
                 "class_passed": class_passed,
                 "aesthetic_label": aesthetic_label,

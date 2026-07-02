@@ -402,6 +402,53 @@ const NODE_DEFS = {
       { key: 'keep_quality', label: '质量标签', type: 'checkbox' }
     ]
   },
+  'metadata-aesthetic': {
+    label: '美学评分',
+    category: '元数据节点',
+    inputs: FILE_IN,
+    outputs: [FILE_OUT[0], META_OUT],
+    params: {
+      classifier_model_key: '',
+      aesthetic_model_key: '',
+      min_score: 5,
+      keep_only_passed: false,
+      move_low_to_del: false,
+      class_filter_enabled: true,
+      allowed_classes: '3d,bangumi,comic,illustration',
+      class_threshold: 0,
+      score_only_passed: true,
+      letterbox_preprocess: true,
+      relaxed_class_match: true
+    },
+    fields: [
+      {
+        key: 'classifier_model_key',
+        label: '分类模型 Key',
+        type: 'text',
+        placeholder: '留空使用第一个已下载分类模型'
+      },
+      {
+        key: 'aesthetic_model_key',
+        label: '评分模型 Key',
+        type: 'text',
+        placeholder: '留空使用第一个已下载评分模型'
+      },
+      { key: 'min_score', label: '低分阈值', type: 'number', min: 0, max: 10, step: 0.1 },
+      { key: 'keep_only_passed', label: '仅输出达标', type: 'checkbox' },
+      { key: 'move_low_to_del', label: '低分入 del', type: 'checkbox' },
+      { key: 'class_filter_enabled', label: '启用分类筛选', type: 'checkbox' },
+      {
+        key: 'allowed_classes',
+        label: '允许类别',
+        type: 'text',
+        placeholder: '3d,bangumi,comic,illustration'
+      },
+      { key: 'class_threshold', label: '分类置信', type: 'number', min: 0, max: 0.95, step: 0.05 },
+      { key: 'score_only_passed', label: '只评分通过分类', type: 'checkbox' },
+      { key: 'letterbox_preprocess', label: '保持比例补边', type: 'checkbox' },
+      { key: 'relaxed_class_match', label: '绘画容错', type: 'checkbox' }
+    ]
+  },
   'metadata-caption': {
     label: 'Caption',
     category: '元数据节点',
@@ -979,6 +1026,12 @@ function unique(items) {
   return [...new Set((items || []).filter(Boolean))]
 }
 
+function clampNumber(value, fallback, min, max) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return fallback
+  return Math.max(min, Math.min(max, number))
+}
+
 function imagePaths(entries) {
   return (entries || []).map((item) => item.path).filter(Boolean)
 }
@@ -1050,6 +1103,7 @@ async function moveFilesToDel(files, label = '移入 del') {
 
   let moved = 0
   let failed = 0
+  const movedFiles = []
   const failures = []
   for (let index = 0; index < targets.length; index += 1) {
     if (abortRequested.value) throw new Error('任务已停止')
@@ -1065,8 +1119,10 @@ async function moveFilesToDel(files, label = '移入 del') {
       message: `${label} ${index}/${targets.length}`
     })
     const result = await window.api.deleteImage(file)
-    if (result?.success) moved += 1
-    else {
+    if (result?.success) {
+      moved += 1
+      movedFiles.push(file)
+    } else {
       failed += 1
       failures.push({ file, error: result?.error || '移动失败' })
     }
@@ -1082,7 +1138,7 @@ async function moveFilesToDel(files, label = '移入 del') {
     },
     message: `${label} ${targets.length}/${targets.length}`
   })
-  return { moved, failed, failures }
+  return { moved, failed, movedFiles, failures }
 }
 
 async function runTransform(endpoint, payload, sourceFiles, folder, fallback, metadata = {}) {
@@ -1401,6 +1457,8 @@ async function runNode(node, inputMap, root) {
       }
     case 'metadata-tagger':
       return await runTaggerNode(params, inputFiles, inputMetadata)
+    case 'metadata-aesthetic':
+      return await runAestheticNode(params, inputFiles, inputMetadata)
     case 'metadata-caption':
       return await runCaptionNode(params, inputFiles, inputMetadata)
     case 'output-save': {
@@ -1517,6 +1575,133 @@ async function runTaggerNode(params, files, inputMetadata) {
   return {
     files: makeFileValue(files, { ...inputMetadata, ...tags }),
     metadata: makeMetadataValue(tags)
+  }
+}
+
+function selectDeepGhsModel(models, kind, key, label) {
+  const candidates = (models || []).filter((item) => item.kind === kind)
+  const modelKey = String(key || '').trim()
+  const selected = modelKey
+    ? candidates.find((item) => item.key === modelKey)
+    : candidates.find((item) => item.downloaded) || candidates[0]
+  if (!selected) throw new Error(`没有可用${label}模型`)
+  if (!selected.downloaded) throw new Error(`${label}模型未下载：${selected.key}`)
+  return selected
+}
+
+function formatAestheticMetadata(item) {
+  if (!item?.ok) return `error: ${item?.error || 'failed'}`
+  const score = item.aesthetic_score == null ? '-' : Number(item.aesthetic_score).toFixed(2)
+  const classText = item.class_label || '-'
+  const qualityText = item.aesthetic_label || '-'
+  const parts = [`score:${score}`, `quality:${qualityText}`, `class:${classText}`]
+  if (item.class_confidence != null) {
+    parts.push(`class_conf:${Math.round(Number(item.class_confidence) * 100)}%`)
+  }
+  if (item.class_passed === false) parts.push('class_passed:no')
+  if (item.low_score) parts.push('low_score:yes')
+  if (item.class_fallback) parts.push(`fallback:${item.class_fallback}`)
+  if (item.raw_class_label && item.raw_class_label !== item.class_label) {
+    parts.push(`raw_class:${item.raw_class_label}`)
+  }
+  return parts.join(', ')
+}
+
+async function runAestheticNode(params, files, inputMetadata) {
+  if (!files.length) {
+    return {
+      files: makeFileValue([], inputMetadata),
+      metadata: makeMetadataValue({}),
+      message: '没有可评分图片'
+    }
+  }
+
+  const models = await window.api.callPython('/deepghs-models', {})
+  assertSuccess(models, '读取美学模型失败')
+  const classifier = selectDeepGhsModel(
+    models.models,
+    'classifier',
+    params.classifier_model_key,
+    '分类'
+  )
+  const aesthetic = selectDeepGhsModel(
+    models.models,
+    'aesthetic',
+    params.aesthetic_model_key,
+    '评分'
+  )
+  const classFilterEnabled = params.class_filter_enabled === true
+  const minScore = clampNumber(params.min_score, 5, 0, 10)
+  const classThreshold = clampNumber(params.class_threshold, 0, 0, 0.95)
+
+  const result = await window.api.callPython('/deepghs-analyze', {
+    files,
+    classifier_model_key: classifier.key,
+    aesthetic_model_key: aesthetic.key,
+    allowed_classes: classFilterEnabled ? splitCsv(params.allowed_classes) : [],
+    class_threshold: classThreshold,
+    min_score: minScore,
+    score_only_passed: classFilterEnabled && params.score_only_passed === true,
+    letterbox_preprocess: params.letterbox_preprocess !== false,
+    relaxed_class_match: params.relaxed_class_match !== false
+  })
+  assertSuccess(result, '美学评分失败')
+
+  const results = result.results || []
+  const byFile = new Map(results.map((item) => [item.file, item]))
+  const metadata = {}
+  for (const item of results) {
+    if (item.file) metadata[item.file] = formatAestheticMetadata(item)
+  }
+
+  const lowFiles = results
+    .filter(
+      (item) =>
+        item.ok &&
+        item.file &&
+        (!classFilterEnabled || item.class_passed) &&
+        item.aesthetic_score != null &&
+        Number(item.aesthetic_score) < minScore
+    )
+    .map((item) => item.file)
+  let outputFiles = files
+  let deleted = { moved: 0, failed: 0 }
+
+  if (params.keep_only_passed === true) {
+    outputFiles = files.filter((file) => {
+      const item = byFile.get(file)
+      if (!item?.ok || item.aesthetic_score == null) return false
+      if (Number(item.aesthetic_score) < minScore) return false
+      return !classFilterEnabled || item.class_passed
+    })
+  }
+
+  if (params.move_low_to_del === true) {
+    deleted = await moveFilesToDel(lowFiles, '低分入 del')
+    const movedSet = new Set(deleted.movedFiles || [])
+    outputFiles = outputFiles.filter((file) => !movedSet.has(file))
+  }
+
+  const outputMetadata = {}
+  for (const file of outputFiles) {
+    if (metadata[file] !== undefined) outputMetadata[file] = metadata[file]
+  }
+
+  const scored = results.filter((item) => item.ok && item.aesthetic_score != null).length
+  const rejected = classFilterEnabled
+    ? results.filter((item) => item.ok && item.class_passed === false).length
+    : 0
+  const moveText =
+    params.move_low_to_del === true ? `，低分入 del ${deleted.moved} 张` : ''
+  const failedText = deleted.failed ? `，移动失败 ${deleted.failed} 张` : ''
+  const filterText =
+    params.keep_only_passed === true ? `，输出达标 ${outputFiles.length} 张` : ''
+  const classText = classFilterEnabled ? `，分类过滤 ${rejected} 张` : ''
+
+  return {
+    files: makeFileValue(outputFiles, { ...inputMetadata, ...outputMetadata }),
+    metadata: makeMetadataValue(metadata),
+    message: `已评分 ${scored} 张，低分 ${lowFiles.length} 张${classText}${filterText}${moveText}${failedText}`
   }
 }
 

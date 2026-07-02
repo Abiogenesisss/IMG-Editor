@@ -13,6 +13,7 @@ const api = {
   getApiConfigs: () => ipcRenderer.invoke('get-api-configs'),
   saveApiConfigs: (configs) => ipcRenderer.invoke('save-api-configs', configs),
   migrateApiConfigs: (configs) => ipcRenderer.invoke('migrate-api-configs', configs),
+  listApiModels: (config) => ipcRenderer.invoke('list-api-models', config),
   generateImage: (options) => ipcRenderer.invoke('generate-image', options),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   selectImageFiles: () => ipcRenderer.invoke('select-image-files'),

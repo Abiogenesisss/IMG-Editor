@@ -817,10 +817,11 @@ onBeforeUnmount(() => {
 }
 
 .config-input {
-  min-height: 64px;
-  resize: vertical;
+  min-height: 78px;
+  resize: none;
   padding: 7px 8px;
   line-height: 1.42;
+  overflow-y: auto;
 }
 
 .text-input:focus,

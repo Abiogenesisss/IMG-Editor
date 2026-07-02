@@ -49,6 +49,20 @@ MODELS = {
         "tags_format": "cl_json",
         "preprocess": "wd",
     },
+    "cl-tagger-v2_01a": {
+        "repo": "cella110n/cl_tagger_v2",
+        "name": "cl-tagger-v2_01a",
+        "requires_auth": True,
+        "files": [
+            ("v2_01a/model.onnx", "model.onnx"),
+            ("v2_01a/model.onnx.data", "model.onnx.data"),
+            ("v2_01a/model_vocabulary.json", "model_vocabulary.json"),
+        ],
+        "tags_file": "model_vocabulary.json",
+        "tags_format": "cl_v2_json",
+        "preprocess": "siglip2",
+        "output": "logits",
+    },
     # ---- WD v3 系列 ----
     "wd-eva02-large-v3": {
         "repo": "SmilingWolf/wd-eva02-large-tagger-v3",
@@ -124,15 +138,22 @@ def _get_model_dir(model_key):
 
 def list_models():
     """列出所有可用模型及其下载状态"""
-    return list_model_status(MODELS, MODEL_DIR, _model_files)
+    return list_model_status(MODELS, MODEL_DIR, _model_files, extra_fields=("requires_auth",))
 
 
-def download_model(model_key, progress_cb=None):
+def download_model(model_key, progress_cb=None, auth_token=""):
     """
     从 HuggingFace 下载模型文件
     progress_cb(step, total_steps, file_name, downloaded_bytes, total_bytes)
     """
-    return download_model_files(model_key, MODELS, MODEL_DIR, _model_files, progress_cb=progress_cb)
+    return download_model_files(
+        model_key,
+        MODELS,
+        MODEL_DIR,
+        _model_files,
+        progress_cb=progress_cb,
+        auth_token=auth_token,
+    )
 
 
 def _load_tags_csv(path):
@@ -158,6 +179,20 @@ def _load_tags_cl_json(path):
         cat_str = str(entry.get("category", "")).lower()
         category = CL_CATEGORY_MAP.get(cat_str, 0)
         tags.append({"name": entry["tag"], "category": category})
+    return tags
+
+
+def _load_tags_cl_v2_json(path):
+    """CL Tagger v2 格式: {"idx_to_tag": ..., "tag_to_category": ...}"""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    idx_to_tag = data.get("idx_to_tag") or {}
+    tag_to_category = data.get("tag_to_category") or {}
+    tags = []
+    for i in sorted(idx_to_tag.keys(), key=lambda k: int(k)):
+        name = idx_to_tag[i]
+        cat_str = str(tag_to_category.get(name, "")).lower()
+        tags.append({"name": name, "category": CL_CATEGORY_MAP.get(cat_str, 0)})
     return tags
 
 
@@ -188,6 +223,8 @@ def _load_model(model_key):
     tags_format = info.get("tags_format", "csv")
     if tags_format == "cl_json":
         tags = _load_tags_cl_json(tags_path)
+    elif tags_format == "cl_v2_json":
+        tags = _load_tags_cl_v2_json(tags_path)
     else:
         tags = _load_tags_csv(tags_path)
 
@@ -239,15 +276,37 @@ def _preprocess_pixai(image_path, target_size):
     return arr
 
 
+def _preprocess_siglip2(image_path, target_size):
+    """CL Tagger v2: RGB, bicubic resize, [-1, 1], NCHW."""
+    img = Image.open(image_path).convert("RGBA")
+    bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+    bg.paste(img, mask=img)
+    img = bg.convert("RGB").resize((target_size, target_size), Image.BICUBIC)
+
+    arr = np.array(img, dtype=np.float32) / 255.0
+    arr = (arr - 0.5) / 0.5
+    arr = np.transpose(arr, (2, 0, 1))
+    arr = np.expand_dims(arr, 0)
+    return arr
+
+
 def _get_preprocess_fn(info):
     kind = info.get("preprocess", "wd")
+    if kind == "siglip2":
+        return _preprocess_siglip2
     if kind == "pixai":
         return _preprocess_pixai
     return _preprocess_wd
 
 
+def _sigmoid(values):
+    values = np.clip(values, -50, 50)
+    return 1.0 / (1.0 + np.exp(-values))
+
+
 def _tag_one(session, tags, input_name, target_size, image_path,
              general_threshold, character_threshold, preprocess_fn,
+             output_is_logits=False,
              keep_copyright=True, keep_rating=False,
              keep_meta=False, keep_model=False, keep_quality=False):
     """对单张图片执行推理并返回标签"""
@@ -255,6 +314,8 @@ def _tag_one(session, tags, input_name, target_size, image_path,
         img_arr = preprocess_fn(image_path, target_size)
         outputs = session.run(None, {input_name: img_arr})
         probs = outputs[0][0]
+        if output_is_logits:
+            probs = _sigmoid(probs)
 
         general_tags = []
         character_tags = []
@@ -326,6 +387,7 @@ def tag_batch(files, model_key, general_threshold=0.35, character_threshold=0.85
     session, tags = _load_model(model_key)
     info = MODELS[model_key]
     preprocess_fn = _get_preprocess_fn(info)
+    output_is_logits = info.get("output") == "logits"
 
     input_shape = session.get_inputs()[0].shape
     target_size = input_shape[2] if isinstance(input_shape[2], int) else 448
@@ -337,6 +399,7 @@ def tag_batch(files, model_key, general_threshold=0.35, character_threshold=0.85
     for i, fpath in enumerate(files):
         result = _tag_one(session, tags, input_name, target_size, fpath,
                           general_threshold, character_threshold, preprocess_fn,
+                          output_is_logits=output_is_logits,
                           keep_copyright=keep_copyright,
                           keep_rating=keep_rating,
                           keep_meta=keep_meta,

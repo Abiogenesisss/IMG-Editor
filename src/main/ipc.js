@@ -570,6 +570,67 @@ function trimTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '')
 }
 
+function resolveModelListRequest(endpoint, apiKey) {
+  const raw = trimTrailingSlash(endpoint || 'https://api.openai.com/v1')
+  const url = new URL(raw)
+  const isGoogle = /(^|\.)googleapis\.com$/i.test(url.hostname)
+
+  if (isGoogle) {
+    url.pathname = url.pathname
+      .replace(/\/interactions$/i, '')
+      .replace(/\/models\/?$/i, '')
+      .replace(/\/+$/, '')
+    url.pathname = `${url.pathname || '/v1beta'}/models`
+    url.searchParams.set('key', apiKey)
+    return { url: url.toString(), headers: {} }
+  }
+
+  url.pathname = url.pathname
+    .replace(/\/chat\/completions$/i, '')
+    .replace(/\/images\/(generations|edits)$/i, '')
+    .replace(/\/models\/?$/i, '')
+    .replace(/\/+$/, '')
+  url.pathname = `${url.pathname || '/v1'}/models`
+  return { url: url.toString(), headers: { Authorization: `Bearer ${apiKey}` } }
+}
+
+function parseApiModels(payload) {
+  const items = Array.isArray(payload?.data)
+    ? payload.data
+    : Array.isArray(payload?.models)
+      ? payload.models
+      : []
+  return items
+    .map((item) => {
+      const raw = String(item?.id || item?.name || '').trim()
+      if (!raw) return null
+      const id = raw.replace(/^models\//, '')
+      return { id, name: String(item?.display_name || item?.displayName || id) }
+    })
+    .filter(Boolean)
+}
+
+async function listApiModels(_event, config = {}) {
+  const endpoint = String(config.endpoint || '').trim()
+  const apiKey = String(config.apiKey || '').trim()
+  if (!endpoint) return { success: false, error: '请先填写 API Endpoint' }
+  if (!apiKey) return { success: false, error: '请先填写 API Key' }
+
+  try {
+    const request = resolveModelListRequest(endpoint, apiKey)
+    const response = await fetch(request.url, {
+      headers: request.headers,
+      signal: AbortSignal.timeout(12000)
+    })
+    const payload = await readJsonResponse(response)
+    const models = parseApiModels(payload)
+    if (!models.length) return { success: false, error: '未解析到模型列表' }
+    return { success: true, models }
+  } catch (err) {
+    return { success: false, error: err.message || '读取模型列表失败' }
+  }
+}
+
 function resolveOpenAIImageEndpoint(endpoint) {
   const raw = trimTrailingSlash(endpoint || 'https://api.openai.com/v1')
   if (/\/images\/edits$/i.test(raw)) {
@@ -1785,6 +1846,8 @@ export function registerIPC() {
   ipcMain.handle('migrate-api-configs', async (_event, legacyConfigs) =>
     migrateApiConfigs(legacyConfigs)
   )
+
+  ipcMain.handle('list-api-models', listApiModels)
 
   ipcMain.handle('generate-image', generateImage)
 

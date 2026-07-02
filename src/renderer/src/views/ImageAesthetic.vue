@@ -37,6 +37,8 @@ const allowedClasses = ref(new Set(DEFAULT_ALLOWED_CLASSES))
 const classThreshold = ref(0.0)
 const minScore = ref(5.0)
 const scoreOnlyPassed = ref(true)
+const letterboxPreprocess = ref(true)
+const relaxedClassMatch = ref(true)
 const resultMap = ref(new Map())
 
 const {
@@ -244,7 +246,9 @@ async function runAnalyze() {
       allowed_classes: [...allowedClasses.value],
       class_threshold: classThreshold.value,
       min_score: minScore.value,
-      score_only_passed: scoreOnlyPassed.value
+      score_only_passed: scoreOnlyPassed.value,
+      letterbox_preprocess: letterboxPreprocess.value,
+      relaxed_class_match: relaxedClassMatch.value
     })
     if (result.aborted) return
     if (!result.success) {
@@ -426,6 +430,20 @@ onMounted(() => {
           <span class="toggle-knob"></span>
         </span>
         <span>只评分通过分类</span>
+      </label>
+
+      <label class="toggle-control" @click="letterboxPreprocess = !letterboxPreprocess">
+        <span :class="['toggle-switch', { on: letterboxPreprocess }]">
+          <span class="toggle-knob"></span>
+        </span>
+        <span>保持比例补边</span>
+      </label>
+
+      <label class="toggle-control" @click="relaxedClassMatch = !relaxedClassMatch">
+        <span :class="['toggle-switch', { on: relaxedClassMatch }]">
+          <span class="toggle-knob"></span>
+        </span>
+        <span>绘画容错</span>
       </label>
 
       <span v-if="downloadInfo" class="download-info">{{ downloadInfo }}</span>

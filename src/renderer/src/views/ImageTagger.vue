@@ -60,6 +60,9 @@ function joinTags(arr) {
 // ===================== 模型相关 =====================
 const models = ref([])
 const selectedModel = ref('')
+const hfToken = ref('')
+const hfTokenDraft = ref('')
+const hfTokenMessage = ref('')
 
 async function loadModels() {
   const result = await window.api.callPython('/tagger-models', {})
@@ -70,23 +73,50 @@ async function loadModels() {
   }
 }
 
+async function downloadSelectedModel() {
+  const result = await window.api.callPython('/tagger-download', {
+    model_key: selectedModel.value,
+    auth_token: currentModelInfo.value?.requires_auth ? hfToken.value : ''
+  })
+  if (result.success) {
+    await loadModels()
+    downloadInfo.value = ''
+    hfTokenMessage.value = ''
+    return
+  }
+  if (result.auth_required) {
+    hfTokenMessage.value = result.error || '此模型需要 Hugging Face token'
+    hfTokenDraft.value = hfToken.value
+    downloadInfo.value = ''
+    return
+  }
+  downloadInfo.value = result.error || '下载失败'
+}
+
 async function downloadModel() {
   if (!selectedModel.value || downloading.value) return
   downloading.value = true
   downloadInfo.value = '准备下载...'
   try {
-    const result = await window.api.callPython('/tagger-download', {
-      model_key: selectedModel.value
-    })
-    if (result.success) {
-      await loadModels()
-      downloadInfo.value = ''
-    } else downloadInfo.value = result.error || '下载失败'
+    await downloadSelectedModel()
   } catch (err) {
     downloadInfo.value = err.message || '下载失败'
   } finally {
     downloading.value = false
   }
+}
+
+function retryHfTokenDownload() {
+  const token = hfTokenDraft.value.trim()
+  if (!token || downloading.value) return
+  hfToken.value = token
+  hfTokenMessage.value = ''
+  downloadModel()
+}
+
+function cancelHfTokenPrompt() {
+  hfTokenMessage.value = ''
+  hfTokenDraft.value = ''
 }
 
 const currentModelInfo = computed(() => models.value.find((m) => m.key === selectedModel.value))
@@ -106,6 +136,7 @@ function selectModel(key) {
 const generalThreshold = ref(0.35)
 const characterThreshold = ref(0.85)
 const replaceUnderscore = ref(true)
+const clV2ThresholdApplied = ref(false)
 // CL Tagger 类别开关:仅在选中 CL Tagger 时生效
 const keepCopyright = ref(true)
 const keepRating = ref(false)
@@ -113,7 +144,14 @@ const keepMeta = ref(false)
 const keepModel = ref(false)
 const keepQuality = ref(false)
 
-const isClTagger = computed(() => selectedModel.value === 'cl-tagger-v1.02')
+const isClTagger = computed(() => selectedModel.value.startsWith('cl-tagger-'))
+
+watch(selectedModel, (key) => {
+  if (key === 'cl-tagger-v2_01a' && !clV2ThresholdApplied.value && generalThreshold.value === 0.35) {
+    generalThreshold.value = 0.55
+    clV2ThresholdApplied.value = true
+  }
+})
 
 // ===================== 标签数据 =====================
 const tagsMap = shallowRef({})
@@ -539,6 +577,25 @@ const showTagPanel = ref(true)
       </div>
     </div>
 
+    <div v-if="hfTokenMessage" class="hf-token-bar">
+      <span class="hf-token-message">{{ hfTokenMessage }}</span>
+      <input
+        v-model="hfTokenDraft"
+        class="hf-token-input"
+        type="password"
+        placeholder="Hugging Face token"
+        @keyup.enter="retryHfTokenDownload"
+      />
+      <button
+        class="hf-token-btn"
+        :disabled="!hfTokenDraft.trim() || downloading"
+        @click="retryHfTokenDownload"
+      >
+        重试
+      </button>
+      <button class="hf-token-close" @click="cancelHfTokenPrompt">×</button>
+    </div>
+
     <!-- 阈值设置栏 -->
     <div class="threshold-bar">
       <div class="threshold-item">
@@ -959,6 +1016,63 @@ const showTagPanel = ref(true)
   padding: 0 4px;
 }
 
+.hf-token-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--color-accent-light);
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent-text);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.hf-token-message {
+  flex: 1;
+  min-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hf-token-input {
+  width: 260px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  font-size: 12px;
+  outline: none;
+}
+.hf-token-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+.hf-token-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+.hf-token-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.hf-token-close {
+  border: none;
+  background: none;
+  color: var(--color-accent-text);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
 /* ===== 阈值栏 ===== */
 .threshold-bar {
   position: relative;
@@ -1051,6 +1165,7 @@ const showTagPanel = ref(true)
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 /* 自定义下拉框 */
@@ -1143,11 +1258,22 @@ const showTagPanel = ref(true)
 }
 
 .download-btn {
-  color: var(--color-info);
-  border-color: var(--color-info);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-on-accent);
+  box-shadow: none;
+  flex-shrink: 0;
 }
 .download-btn:hover:not(:disabled) {
-  background: var(--color-info-light);
+  background: var(--color-accent-light);
+  border-color: var(--color-accent-border);
+  color: var(--color-accent-text);
+}
+.download-btn:disabled {
+  background: var(--color-surface);
+  border-color: var(--color-border-light);
+  color: var(--color-text-muted);
+  box-shadow: none;
 }
 .download-info {
   font-size: 11px;

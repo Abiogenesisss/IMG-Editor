@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import {
+  ChevronDown,
   CheckCircle2,
   CircleX,
   Copy,
@@ -142,6 +143,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (removeUpdateListener) removeUpdateListener()
+  if (modelFetchTimer) clearTimeout(modelFetchTimer)
+  document.removeEventListener('click', closeModelDrop)
 })
 
 async function toggleAutoCheck() {
@@ -199,6 +202,7 @@ const apiConfigs = ref([])
 
 onMounted(() => {
   refreshConfigs()
+  document.addEventListener('click', closeModelDrop)
 })
 
 // 添加/编辑表单
@@ -209,6 +213,17 @@ const formModel = ref('')
 const formEndpoint = ref('')
 const formApiKey = ref('')
 const showApiKey = ref(false)
+const modelOptions = ref([])
+const modelLoading = ref(false)
+const modelError = ref('')
+const modelDropOpen = ref(false)
+const modelFilter = ref('')
+let modelFetchTimer = null
+let modelFetchSeq = 0
+
+function closeModelDrop() {
+  modelDropOpen.value = false
+}
 
 function resetForm() {
   editingId.value = null
@@ -217,6 +232,11 @@ function resetForm() {
   formEndpoint.value = ''
   formApiKey.value = ''
   showApiKey.value = false
+  modelOptions.value = []
+  modelLoading.value = false
+  modelError.value = ''
+  modelDropOpen.value = false
+  modelFilter.value = ''
 }
 
 function openAddForm() {
@@ -232,12 +252,89 @@ function openEditForm(cfg) {
   formApiKey.value = cfg.apiKey
   showApiKey.value = false
   showForm.value = true
+  scheduleModelFetch()
 }
 
 function closeForm() {
   showForm.value = false
+  modelFetchSeq += 1
+  if (modelFetchTimer) clearTimeout(modelFetchTimer)
   resetForm()
 }
+
+const modelSelectOptions = computed(() => {
+  const current = formModel.value.trim()
+  const options = modelOptions.value
+  if (!current || options.some((item) => item.id === current)) return options
+  return [{ id: current, name: current }, ...options]
+})
+
+const filteredModelOptions = computed(() => {
+  const keyword = modelFilter.value.trim().toLowerCase()
+  if (!keyword) return modelSelectOptions.value
+  return modelSelectOptions.value.filter((model) =>
+    `${model.id} ${model.name || ''}`.toLowerCase().includes(keyword)
+  )
+})
+
+const selectedModelText = computed(() => {
+  const model = modelSelectOptions.value.find((item) => item.id === formModel.value)
+  return model?.name || formModel.value || '选择模型'
+})
+
+function formAnchorId(id) {
+  return `api-config-form-anchor-${String(id).replace(/[^A-Za-z0-9_-]/g, '-')}`
+}
+
+const formTeleportTarget = computed(() =>
+  editingId.value ? `#${formAnchorId(editingId.value)}` : '#api-config-form-anchor-top'
+)
+
+function selectFormModel(id) {
+  formModel.value = id
+  modelDropOpen.value = false
+  modelFilter.value = ''
+}
+
+function scheduleModelFetch() {
+  modelFetchSeq += 1
+  const seq = modelFetchSeq
+  if (modelFetchTimer) clearTimeout(modelFetchTimer)
+  modelError.value = ''
+  if (!showForm.value || !formEndpoint.value.trim() || !formApiKey.value.trim()) {
+    modelOptions.value = []
+    modelLoading.value = false
+    return
+  }
+  modelLoading.value = true
+  modelFetchTimer = setTimeout(() => fetchModelOptions(seq), 650)
+}
+
+async function fetchModelOptions(seq) {
+  const endpoint = formEndpoint.value.trim()
+  const apiKey = formApiKey.value.trim()
+  try {
+    const result = await window.api.listApiModels({ endpoint, apiKey })
+    if (seq !== modelFetchSeq) return
+    if (result.success) {
+      modelOptions.value = result.models || []
+      if (!formModel.value.trim() && modelOptions.value[0]) formModel.value = modelOptions.value[0].id
+      modelDropOpen.value = false
+      modelFilter.value = ''
+    } else {
+      modelOptions.value = []
+      modelError.value = result.error || '模型列表读取失败'
+    }
+  } catch (err) {
+    if (seq !== modelFetchSeq) return
+    modelOptions.value = []
+    modelError.value = err.message || '模型列表读取失败'
+  } finally {
+    if (seq === modelFetchSeq) modelLoading.value = false
+  }
+}
+
+watch([formEndpoint, formApiKey], scheduleModelFetch)
 
 async function submitForm() {
   if (!formName.value.trim() || !formModel.value.trim()) return
@@ -270,6 +367,7 @@ async function submitForm() {
 }
 
 async function deleteConfig(id) {
+  if (editingId.value === id) closeForm()
   apiConfigs.value = apiConfigs.value.filter((c) => c.id !== id)
   await saveConfigs(apiConfigs.value)
 }
@@ -462,8 +560,10 @@ const previewUrl = computed(() => {
         </div>
 
         <!-- 添加/编辑表单 -->
-        <Transition name="form-fade">
-          <div v-if="showForm" class="config-form">
+        <div id="api-config-form-anchor-top" class="config-form-anchor"></div>
+        <Teleport v-if="showForm" :to="formTeleportTarget" defer>
+          <Transition name="form-fade" appear>
+            <div class="config-form">
             <div class="form-title">
               {{ editingId ? '编辑 API 配置' : '添加 API 配置' }}
               <button class="form-close" @click="closeForm">
@@ -477,12 +577,57 @@ const previewUrl = computed(() => {
               </div>
               <div class="form-field">
                 <label class="form-label">MODEL NAME</label>
+                <div v-if="modelSelectOptions.length" class="model-combobox">
+                  <button
+                    class="model-combobox-trigger"
+                    type="button"
+                    @click.stop="modelDropOpen = !modelDropOpen"
+                  >
+                    <span>{{ selectedModelText }}</span>
+                    <ChevronDown
+                      :class="['model-combobox-arrow', { open: modelDropOpen }]"
+                      :size="14"
+                      :stroke-width="2.2"
+                      aria-hidden="true"
+                    />
+                  </button>
+                  <Transition name="model-menu">
+                    <div v-if="modelDropOpen" class="model-combobox-menu" @click.stop>
+                      <input
+                        v-model="modelFilter"
+                        class="model-combobox-search"
+                        type="text"
+                        placeholder="搜索模型"
+                      />
+                      <div class="model-combobox-list">
+                        <button
+                          v-for="model in filteredModelOptions"
+                          :key="model.id"
+                          :class="['model-combobox-item', { active: formModel === model.id }]"
+                          type="button"
+                          @click="selectFormModel(model.id)"
+                        >
+                          <span>{{ model.name || model.id }}</span>
+                          <small v-if="model.name && model.name !== model.id">{{ model.id }}</small>
+                        </button>
+                        <div v-if="filteredModelOptions.length === 0" class="model-combobox-empty">
+                          没有匹配模型
+                        </div>
+                      </div>
+                    </div>
+                  </Transition>
+                </div>
                 <input
+                  v-else
                   v-model="formModel"
                   class="form-input"
                   type="text"
                   placeholder="deepseek-reasoner"
                 />
+                <span v-if="modelLoading" class="model-fetch-hint">正在读取模型列表...</span>
+                <span v-else-if="modelError" class="model-fetch-hint error">
+                  {{ modelError }}，可手动填写
+                </span>
               </div>
             </div>
             <div class="form-field">
@@ -519,8 +664,9 @@ const previewUrl = computed(() => {
                 {{ editingId ? '保存修改' : '添加配置' }}
               </button>
             </div>
-          </div>
-        </Transition>
+            </div>
+          </Transition>
+        </Teleport>
 
         <!-- 配置列表 -->
         <div v-if="apiConfigs.length === 0 && !showForm" class="empty-configs">
@@ -530,8 +676,9 @@ const previewUrl = computed(() => {
           <div
             v-for="cfg in apiConfigs"
             :key="cfg.id"
-            :class="['config-item', { disabled: !cfg.enabled }]"
+            class="config-entry"
           >
+            <div :class="['config-item', { disabled: !cfg.enabled }]">
             <span :class="['config-toggle', { on: cfg.enabled }]" @click="toggleEnabled(cfg)">
               <span class="config-toggle-knob"></span>
             </span>
@@ -550,6 +697,8 @@ const previewUrl = computed(() => {
                 <Trash2 :size="15" :stroke-width="2" aria-hidden="true" />
               </button>
             </div>
+            </div>
+            <div :id="formAnchorId(cfg.id)" class="config-form-anchor"></div>
           </div>
         </TransitionGroup>
       </section>
@@ -863,6 +1012,150 @@ const previewUrl = computed(() => {
   border-color: var(--color-text);
 }
 
+.model-combobox {
+  position: relative;
+}
+.model-combobox-trigger {
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.15s;
+}
+.model-combobox-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-combobox-trigger:hover,
+.model-combobox-trigger:focus-visible {
+  border-color: var(--color-border-hover);
+  box-shadow: 0 0 0 2px var(--color-accent-light);
+  outline: none;
+}
+.model-combobox-arrow {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  transition: transform 0.16s;
+}
+.model-combobox-arrow.open {
+  transform: rotate(180deg);
+}
+.model-combobox-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-input-bg);
+  box-shadow: 0 10px 24px var(--color-shadow);
+}
+.model-combobox-search {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+}
+.model-combobox-search:focus {
+  border-color: var(--color-accent-border);
+}
+.model-combobox-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) transparent;
+}
+.model-combobox-list::-webkit-scrollbar {
+  width: 7px;
+}
+.model-combobox-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--color-border-hover);
+}
+.model-combobox-item {
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.model-combobox-item:hover {
+  background: var(--color-surface-hover);
+}
+.model-combobox-item.active {
+  background: var(--color-accent-light);
+  color: var(--color-accent-text);
+}
+.model-combobox-item span,
+.model-combobox-item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-combobox-item small {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+}
+.model-combobox-empty {
+  padding: 14px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.model-menu-enter-active,
+.model-menu-leave-active {
+  transition:
+    opacity 0.12s,
+    transform 0.12s;
+}
+.model-menu-enter-from,
+.model-menu-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.model-fetch-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.model-fetch-hint.error {
+  color: var(--color-warning);
+}
+
 .endpoint-preview {
   display: block;
   margin-top: 4px;
@@ -945,6 +1238,23 @@ const previewUrl = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 0;
+}
+
+.config-entry {
+  margin-bottom: 6px;
+}
+.config-entry:last-child {
+  margin-bottom: 0;
+}
+.config-entry .config-item {
+  margin-bottom: 0;
+}
+.config-entry .config-form {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+.config-form-anchor {
+  min-height: 0;
 }
 
 .config-item {

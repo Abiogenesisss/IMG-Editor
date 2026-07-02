@@ -72,6 +72,24 @@ def find_free_port():
         return s.getsockname()[1]
 
 
+def body_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off"}
+    return bool(value)
+
+
+def body_list(value):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value.strip():
+        return [value]
+    return []
+
+
 # ---------- HTTP Handler ----------
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -476,6 +494,7 @@ class Handler(BaseHTTPRequestHandler):
     def _tagger_download(self):
         body = self._read_body()
         model_key = body.get("model_key", "")
+        auth_token = body.get("auth_token", "")
 
         if not model_key:
             return self._json({"success": False, "error": "no model_key"}, 400)
@@ -492,9 +511,10 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         try:
-            result = tagger_download(model_key, progress_cb=on_progress)
+            result = tagger_download(model_key, progress_cb=on_progress, auth_token=auth_token)
             self._send_event("done", {"success": result.get("ok", False),
-                                       "error": result.get("error", "")})
+                                       "error": result.get("error", ""),
+                                       "auth_required": result.get("auth_required", False)})
         except Exception as e:
             self._send_event("done", {"success": False, "error": str(e)})
 
@@ -574,13 +594,15 @@ class Handler(BaseHTTPRequestHandler):
     # ---- DeepGHS: classify first, then aesthetic score ----
     def _deepghs_analyze(self):
         body = self._read_body()
-        files = body.get("files", [])
+        files = body_list(body.get("files", []))
         classifier_model_key = body.get("classifier_model_key", "")
         aesthetic_model_key = body.get("aesthetic_model_key", "")
         allowed_classes = body.get("allowed_classes", [])
         class_threshold = body.get("class_threshold", 0.0)
         min_score = body.get("min_score", 5.0)
-        score_only_passed = bool(body.get("score_only_passed", True))
+        score_only_passed = body_bool(body.get("score_only_passed"), True)
+        letterbox_preprocess = body_bool(body.get("letterbox_preprocess"), False)
+        relaxed_class_match = body_bool(body.get("relaxed_class_match"), True)
 
         if not files:
             return self._json({"success": False, "error": "no files"}, 400)
@@ -601,6 +623,8 @@ class Handler(BaseHTTPRequestHandler):
                 class_threshold=class_threshold,
                 min_score=min_score,
                 score_only_passed=score_only_passed,
+                letterbox_preprocess=letterbox_preprocess,
+                relaxed_class_match=relaxed_class_match,
                 cancel_event=_cancel_event,
                 progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t})
             )
