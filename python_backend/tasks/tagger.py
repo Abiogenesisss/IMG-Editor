@@ -62,6 +62,7 @@ MODELS = {
         "tags_format": "cl_v2_json",
         "preprocess": "siglip2",
         "output": "logits",
+        "general_threshold": 0.55,
     },
     # ---- WD v3 系列 ----
     "wd-eva02-large-v3": {
@@ -138,7 +139,12 @@ def _get_model_dir(model_key):
 
 def list_models():
     """列出所有可用模型及其下载状态"""
-    return list_model_status(MODELS, MODEL_DIR, _model_files, extra_fields=("requires_auth",))
+    return list_model_status(
+        MODELS,
+        MODEL_DIR,
+        _model_files,
+        extra_fields=("requires_auth", "general_threshold"),
+    )
 
 
 def download_model(model_key, progress_cb=None, auth_token=""):
@@ -377,7 +383,7 @@ def _tag_one(session, tags, input_name, target_size, image_path,
 def tag_batch(files, model_key, general_threshold=0.35, character_threshold=0.85,
               keep_copyright=True, keep_rating=False,
               keep_meta=False, keep_model=False, keep_quality=False,
-              progress_cb=None):
+              replace_underscore=True, progress_cb=None, cancel_event=None):
     """
     批量打标（主进程内顺序执行，避免多进程重复加载模型）
     progress_cb(done, total)
@@ -397,6 +403,8 @@ def tag_batch(files, model_key, general_threshold=0.35, character_threshold=0.85
     results = []
 
     for i, fpath in enumerate(files):
+        if cancel_event is not None and cancel_event.is_set():
+            break
         result = _tag_one(session, tags, input_name, target_size, fpath,
                           general_threshold, character_threshold, preprocess_fn,
                           output_is_logits=output_is_logits,
@@ -405,6 +413,8 @@ def tag_batch(files, model_key, general_threshold=0.35, character_threshold=0.85
                           keep_meta=keep_meta,
                           keep_model=keep_model,
                           keep_quality=keep_quality)
+        if result.get("ok") and replace_underscore:
+            result["tag_string"] = result["tag_string"].replace("_", " ")
         results.append(result)
         if progress_cb:
             progress_cb(i + 1, total)

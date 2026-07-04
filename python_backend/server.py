@@ -11,8 +11,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
-from tasks.parallel import (run_parallel, clear_cancelled, shutdown_pool,
-                            CancelledError, _cancel_event)
+from tasks.parallel import run_parallel, shutdown_pool, CancelledError
 
 from tasks.flip import flip_one
 from tasks.filter_resolution import filter_one
@@ -43,6 +42,8 @@ from tasks.gpu_config import set_gpu_enabled, gpu_status as get_gpu_status
 
 BACKEND_TOKEN = os.environ.get("IMG_EDITOR_BACKEND_TOKEN", "")
 _upscale_api = None
+_cancel_events = {}
+_cancel_events_lock = threading.Lock()
 
 
 def load_upscale_api():
@@ -97,6 +98,9 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
+    cancel_event = None
+    task_id = ""
+
     def log_message(self, format, *args):
         pass
 
@@ -152,8 +156,14 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             args_list = args_builder(files, body)
-            results = run_parallel(fn, args_list,
-                                   progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t}))
+            results = run_parallel(
+                fn,
+                args_list,
+                progress_cb=lambda d, t: self._send_event(
+                    "progress", {"done": d, "total": t}
+                ),
+                cancel_event=self.cancel_event,
+            )
             ok_count = sum(1 for r in results if r.get("ok"))
             self._send_event("done", {
                 "success": True,
@@ -219,6 +229,15 @@ class Handler(BaseHTTPRequestHandler):
         }
         handler = routes.get(self.path)
         if handler:
+            tracked = self.path not in {"/cancel", "/shutdown"}
+            if tracked:
+                self.task_id = (
+                    self.headers.get("X-IMG-Editor-Task-Id", "").strip()
+                    or f"request-{threading.get_ident()}-{id(self)}"
+                )
+                self.cancel_event = threading.Event()
+                with _cancel_events_lock:
+                    _cancel_events[self.task_id] = self.cancel_event
             try:
                 handler()
             except Exception as exc:
@@ -227,6 +246,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"success": False, "error": error}, 500)
                 except Exception:
                     pass
+            finally:
+                if tracked:
+                    with _cancel_events_lock:
+                        if _cancel_events.get(self.task_id) is self.cancel_event:
+                            _cancel_events.pop(self.task_id, None)
         else:
             self._json({"error": "not found"}, 404)
 
@@ -248,8 +272,14 @@ class Handler(BaseHTTPRequestHandler):
 
         self._begin_sse()
         try:
-            results = run_parallel(filter_one, [(f, min_w, max_w, min_h, max_h) for f in files],
-                                   progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t}))
+            results = run_parallel(
+                filter_one,
+                [(f, min_w, max_w, min_h, max_h) for f in files],
+                progress_cb=lambda d, t: self._send_event(
+                    "progress", {"done": d, "total": t}
+                ),
+                cancel_event=self.cancel_event,
+            )
             filtered_count = sum(1 for r in results if r.get("filtered"))
             self._send_event("done", {
                 "success": True,
@@ -281,9 +311,14 @@ class Handler(BaseHTTPRequestHandler):
         self._begin_sse()
 
         try:
-            results = run_parallel(resize_one,
+            results = run_parallel(
+                resize_one,
                 [(f, output_dir, width, height, allow_upscale, face_threshold) for f in files],
-                progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t}))
+                progress_cb=lambda d, t: self._send_event(
+                    "progress", {"done": d, "total": t}
+                ),
+                cancel_event=self.cancel_event,
+            )
             ok_count = sum(1 for r in results if r["ok"])
             skipped = sum(1 for r in results if r.get("skipped"))
             self._send_event("done", {
@@ -386,14 +421,21 @@ class Handler(BaseHTTPRequestHandler):
                     weight_style=fusion_weights.get("style", 0.0),
                     weight_semantic=fusion_weights.get("semantic", 0.0),
                     weight_color=fusion_weights.get("color", 0.0),
+                    cancel_event=self.cancel_event,
                 )
             elif method == "style":
-                feature_results = extract_style_batch(files, progress_cb=progress_cb)
+                feature_results = extract_style_batch(
+                    files, progress_cb=progress_cb, cancel_event=self.cancel_event
+                )
             elif method == "semantic":
-                feature_results = extract_semantic_batch(files, progress_cb=progress_cb)
+                feature_results = extract_semantic_batch(
+                    files, progress_cb=progress_cb, cancel_event=self.cancel_event
+                )
             else:
                 return self._send_event("done", {"success": False, "error": f"unknown method: {method}"})
 
+            if self.cancel_event.is_set():
+                raise CancelledError("task cancelled")
             results = cluster_features(feature_results, algorithm=algorithm, k=k)
             group_count = len(set(r["group"] for r in results if r["group"] is not None))
 
@@ -403,6 +445,8 @@ class Handler(BaseHTTPRequestHandler):
                 "group_count": group_count,
                 "results": results,
             })
+        except CancelledError:
+            self._send_event("done", {"success": False, "error": "task cancelled"})
         except Exception as exc:
             self._send_event("done", {"success": False, "error": self._log_exception(exc, "cluster failed")})
 
@@ -442,7 +486,8 @@ class Handler(BaseHTTPRequestHandler):
             person_conf=person_conf,
             halfbody_conf=halfbody_conf,
             head_conf=head_conf,
-            progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t})
+            progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t}),
+            cancel_event=self.cancel_event,
         )
         ok_count = sum(1 for r in results if r.get("ok"))
         self._send_event("done", {
@@ -530,6 +575,7 @@ class Handler(BaseHTTPRequestHandler):
         keep_meta = bool(body.get("keep_meta", False))
         keep_model = bool(body.get("keep_model", False))
         keep_quality = bool(body.get("keep_quality", False))
+        replace_underscore = bool(body.get("replace_underscore", True))
 
         if not files:
             return self._json({"success": False, "error": "no files"}, 400)
@@ -548,7 +594,9 @@ class Handler(BaseHTTPRequestHandler):
                 keep_meta=keep_meta,
                 keep_model=keep_model,
                 keep_quality=keep_quality,
-                progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t})
+                replace_underscore=replace_underscore,
+                progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t}),
+                cancel_event=self.cancel_event,
             )
             ok_count = sum(1 for r in results if r.get("ok"))
             self._send_event("done", {
@@ -614,7 +662,6 @@ class Handler(BaseHTTPRequestHandler):
         self._begin_sse()
 
         try:
-            clear_cancelled()
             results = deepghs_analyze(
                 files,
                 classifier_model_key,
@@ -625,7 +672,7 @@ class Handler(BaseHTTPRequestHandler):
                 score_only_passed=score_only_passed,
                 letterbox_preprocess=letterbox_preprocess,
                 relaxed_class_match=relaxed_class_match,
-                cancel_event=_cancel_event,
+                cancel_event=self.cancel_event,
                 progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t})
             )
             ok_count = sum(1 for r in results if r.get("ok"))
@@ -664,11 +711,10 @@ class Handler(BaseHTTPRequestHandler):
         os.makedirs(output_dir, exist_ok=True)
         self._begin_sse()
 
-        clear_cancelled()
         total = len(files)
         results = []
         for idx, f in enumerate(files):
-            if _cancel_event.is_set():
+            if self.cancel_event.is_set():
                 break
             r = upscale_one(f, output_dir, scale, denoise, model,
                             style=style, tta=tta)
@@ -677,7 +723,8 @@ class Handler(BaseHTTPRequestHandler):
 
         ok_count = sum(1 for r in results if r.get("ok"))
         self._send_event("done", {
-            "success": True,
+            "success": not self.cancel_event.is_set(),
+            "aborted": self.cancel_event.is_set(),
             "processed": ok_count,
             "failed": len(results) - ok_count,
             "results": results,
@@ -768,12 +815,11 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": r.get("ok", False),
             })
 
-        clear_cancelled()
         results = caption_batch_api(
             files, model, api_key, system_prompt, user_prompt,
             temperature, top_p, max_tokens, base_url,
             disable_think=disable_think,
-            concurrency=concurrency, cancel_event=_cancel_event,
+            concurrency=concurrency, cancel_event=self.cancel_event,
             progress_cb=on_progress,
             image_size=image_size,
         )
@@ -816,12 +862,11 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": r.get("ok", False),
             })
 
-        clear_cancelled()
         results = caption_batch_multi_api(
             files, api_configs, system_prompt, user_prompt,
             temperature, top_p, max_tokens,
             disable_think=disable_think,
-            concurrency=concurrency, cancel_event=_cancel_event,
+            concurrency=concurrency, cancel_event=self.cancel_event,
             progress_cb=on_progress,
             image_size=image_size,
         )
@@ -913,12 +958,11 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": r.get("ok", False),
             })
 
-        clear_cancelled()
         results = local_caption_batch(
             files, system_prompt, user_prompt,
             temperature, top_p, max_tokens,
             image_size, disable_think,
-            cancel_event=_cancel_event,
+            cancel_event=self.cancel_event,
             progress_cb=on_progress,
         )
 
@@ -969,25 +1013,40 @@ class Handler(BaseHTTPRequestHandler):
         self._begin_sse()
 
         try:
-            clear_cancelled()
             result = run_grab_download(
                 body,
                 progress_cb=lambda data: self._send_event("progress", data),
-                cancel_event=_cancel_event,
+                cancel_event=self.cancel_event,
             )
             self._send_event("done", result)
         except Exception as exc:
             self._send_event("done", {"success": False, "error": self._log_exception(exc, "grab download failed")})
-        finally:
-            clear_cancelled()
-
     # ---- 取消当前任务 ----
     def _cancel(self):
-        _cancel_event.set()
-        self._json({"success": True})
+        body = self._read_body()
+        task_ids = body_list(body.get("task_ids", []))
+        task_id = str(body.get("task_id") or "").strip()
+        if task_id:
+            task_ids.append(task_id)
+
+        with _cancel_events_lock:
+            targets = (
+                [_cancel_events.get(str(value)) for value in task_ids]
+                if task_ids
+                else list(_cancel_events.values())
+            )
+        cancelled = 0
+        for event in targets:
+            if event is not None:
+                event.set()
+                cancelled += 1
+        self._json({"success": True, "cancelled": cancelled})
 
     def _shutdown(self):
-        _cancel_event.set()
+        with _cancel_events_lock:
+            events = list(_cancel_events.values())
+        for event in events:
+            event.set()
         shutdown_pool()
         self._json({"success": True})
         threading.Thread(target=self.server.shutdown, daemon=True).start()

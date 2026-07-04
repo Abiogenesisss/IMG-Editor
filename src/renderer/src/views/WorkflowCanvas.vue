@@ -17,6 +17,16 @@ import {
 } from 'lucide-vue-next'
 import WorkflowNode from '../components/WorkflowNode.vue'
 import { loadApiConfigs } from '../services/apiConfigs'
+import { loadUpscaleCatalog } from '../services/upscaleModels'
+import { readStoredJson } from '../composables/useLocalStorage'
+import {
+  createFallbackUpscaleCatalog,
+  getUpscaleDenoiseOptions,
+  getUpscaleScaleOptions,
+  getUpscaleStyleOptions,
+  listUpscaleModels,
+  validateUpscaleSelection
+} from '../../../shared/upscaleCatalog'
 
 defineOptions({ name: 'WorkflowCanvas' })
 
@@ -26,6 +36,29 @@ const OUTPUT_ROOT_KEY = 'img-editor-workflow-output-root'
 const FILE_IN = [{ id: 'files', label: '输入', type: 'file-list' }]
 const FILE_OUT = [{ id: 'files', label: '输出', type: 'file-list' }]
 const META_OUT = { id: 'metadata', label: '文本', type: 'metadata' }
+const DEFAULT_UPSCALE_CATALOG = createFallbackUpscaleCatalog()
+const UPSCALE_MODEL_OPTIONS = listUpscaleModels(DEFAULT_UPSCALE_CATALOG)
+const UPSCALE_SCALE_OPTIONS = [
+  ...new Set(
+    Object.keys(DEFAULT_UPSCALE_CATALOG).flatMap((model) =>
+      getUpscaleScaleOptions(DEFAULT_UPSCALE_CATALOG, model).map((option) => option.value)
+    )
+  )
+]
+  .sort((a, b) => a - b)
+  .map((value) => ({ value, label: `${value}X` }))
+const UPSCALE_DENOISE_OPTIONS = [
+  ...new Map(
+    Object.keys(DEFAULT_UPSCALE_CATALOG)
+      .flatMap((model) =>
+        getUpscaleScaleOptions(DEFAULT_UPSCALE_CATALOG, model).flatMap((scale) =>
+          getUpscaleDenoiseOptions(DEFAULT_UPSCALE_CATALOG, model, scale.value)
+        )
+      )
+      .map((option) => [option.value, option])
+  ).values()
+]
+const UPSCALE_STYLE_OPTIONS = getUpscaleStyleOptions(DEFAULT_UPSCALE_CATALOG, 'waifu2x')
 
 const NODE_DEFS = {
   'source-generic': {
@@ -346,27 +379,29 @@ const NODE_DEFS = {
     outputs: FILE_OUT,
     params: { scale: 2, denoise: 'denoise3x', model: 'real-cugan', style: 'art', tta: false },
     fields: [
-      { key: 'scale', label: '倍数', type: 'number', min: 1, max: 4 },
+      {
+        key: 'scale',
+        label: '倍数',
+        type: 'select',
+        options: UPSCALE_SCALE_OPTIONS
+      },
       {
         key: 'denoise',
         label: '降噪',
         type: 'select',
-        options: [
-          { value: 'no-denoise', label: '无' },
-          { value: 'denoise1x', label: '轻' },
-          { value: 'denoise2x', label: '中' },
-          { value: 'denoise3x', label: '强' }
-        ]
+        options: UPSCALE_DENOISE_OPTIONS
       },
-      { key: 'model', label: '模型', type: 'text' },
+      {
+        key: 'model',
+        label: '模型',
+        type: 'select',
+        options: UPSCALE_MODEL_OPTIONS
+      },
       {
         key: 'style',
         label: '风格',
         type: 'select',
-        options: [
-          { value: 'art', label: '插画' },
-          { value: 'photo', label: '照片' }
-        ]
+        options: UPSCALE_STYLE_OPTIONS
       },
       { key: 'tta', label: 'TTA', type: 'checkbox' }
     ]
@@ -384,7 +419,8 @@ const NODE_DEFS = {
       keep_rating: false,
       keep_meta: false,
       keep_model: false,
-      keep_quality: false
+      keep_quality: false,
+      replace_underscore: true
     },
     fields: [
       {
@@ -399,7 +435,8 @@ const NODE_DEFS = {
       { key: 'keep_rating', label: 'Rating', type: 'checkbox' },
       { key: 'keep_meta', label: 'Meta', type: 'checkbox' },
       { key: 'keep_model', label: '模型标签', type: 'checkbox' },
-      { key: 'keep_quality', label: '质量标签', type: 'checkbox' }
+      { key: 'keep_quality', label: '质量标签', type: 'checkbox' },
+      { key: 'replace_underscore', label: '下划线', type: 'checkbox', hint: '替换为空格' }
     ]
   },
   'metadata-aesthetic': {
@@ -597,13 +634,9 @@ function createBlankTemplate(name = '未命名工作流') {
 }
 
 function loadTemplates() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
-    templates.value =
-      Array.isArray(parsed) && parsed.length ? parsed : [createBlankTemplate('默认工作流')]
-  } catch {
-    templates.value = [createBlankTemplate('默认工作流')]
-  }
+  const parsed = readStoredJson(STORAGE_KEY, [])
+  templates.value =
+    Array.isArray(parsed) && parsed.length ? parsed : [createBlankTemplate('默认工作流')]
   activeTemplateId.value = templates.value[0].id
   loadActiveTemplate()
 }
@@ -1050,30 +1083,20 @@ function splitCsv(value) {
     .filter(Boolean)
 }
 
-function sanitizeSegment(value) {
-  const reservedChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
-  return (
-    String(value || 'output')
-      .split('')
-      .map((char) => (reservedChars.has(char) || char.charCodeAt(0) < 32 ? '_' : char))
-      .join('')
-      .replace(/\s+/g, '_')
-      .slice(0, 80) || 'output'
-  )
-}
-
-function joinRunPath(root, name) {
-  return `${String(root || '').replace(/[\\/]+$/, '')}\\${sanitizeSegment(name)}`
+async function resolveWorkflowPath(root, name) {
+  const result = await window.api.resolveWorkflowPath(root, name)
+  if (typeof result !== 'string') assertSuccess(result, '创建工作流目录失败')
+  return result
 }
 
 function stageDir(root, node) {
-  return joinRunPath(root, `${node.id}_${node.data.kind}`)
+  return resolveWorkflowPath(root, `${node.id}_${node.data.kind}`)
 }
 
-function resolveOutputDir(root, node) {
+async function resolveOutputDir(root, node) {
   const params = node.data.params || {}
   if (params.output_dir) return params.output_dir
-  return joinRunPath(root, params.subfolder || node.data.kind)
+  return resolveWorkflowPath(root, params.subfolder || node.data.kind)
 }
 
 function assertSuccess(result, fallback) {
@@ -1152,7 +1175,7 @@ async function runNode(node, inputMap, root) {
   const params = node.data.params || {}
   const inputFiles = filesFromInputs(inputMap)
   const inputMetadata = metadataFromInputs(inputMap)
-  const folder = stageDir(root, node)
+  const folder = await stageDir(root, node)
 
   if (abortRequested.value) throw new Error('任务已停止')
 
@@ -1437,6 +1460,16 @@ async function runNode(node, inputMap, root) {
         )
       }
     case 'process-upscale':
+      {
+        const catalog = await loadUpscaleCatalog()
+        const validation = validateUpscaleSelection(catalog, {
+          model: params.model || 'real-cugan',
+          scale: params.scale || 2,
+          denoise: params.denoise || 'denoise3x',
+          style: params.style || 'art'
+        })
+        if (!validation.valid) throw new Error(validation.error)
+      }
       return {
         files: await runTransform(
           '/upscale',
@@ -1462,7 +1495,7 @@ async function runNode(node, inputMap, root) {
     case 'metadata-caption':
       return await runCaptionNode(params, inputFiles, inputMetadata)
     case 'output-save': {
-      const targetDir = resolveOutputDir(root, node)
+      const targetDir = await resolveOutputDir(root, node)
       const result = await window.api.copyWorkflowFiles(inputFiles, targetDir)
       assertSuccess(result, '保存输出失败')
       const copied = (result.results || [])
@@ -1486,7 +1519,7 @@ async function runNode(node, inputMap, root) {
         filesByGroup[key].push(item.file)
       }
       if (!Object.keys(filesByGroup).length) throw new Error('聚类没有生成有效分组')
-      const targetDir = resolveOutputDir(root, node)
+      const targetDir = await resolveOutputDir(root, node)
       const move = await window.api.callPython('/cluster-move', {
         files_by_group: filesByGroup,
         output_dir: targetDir
@@ -1558,13 +1591,17 @@ async function runTaggerNode(params, files, inputMetadata) {
   const result = await window.api.callPython('/tagger-tag', {
     files,
     model_key: selected.key,
-    general_threshold: params.general_threshold ?? 0.35,
+    general_threshold:
+      params.general_threshold === 0.35 && selected.general_threshold != null
+        ? selected.general_threshold
+        : (params.general_threshold ?? selected.general_threshold ?? 0.35),
     character_threshold: params.character_threshold ?? 0.85,
     keep_copyright: params.keep_copyright !== false,
     keep_rating: params.keep_rating === true,
     keep_meta: params.keep_meta === true,
     keep_model: params.keep_model === true,
-    keep_quality: params.keep_quality === true
+    keep_quality: params.keep_quality === true,
+    replace_underscore: params.replace_underscore !== false
   })
   assertSuccess(result, '自动打标失败')
   const tags = {}
@@ -1691,11 +1728,9 @@ async function runAestheticNode(params, files, inputMetadata) {
   const rejected = classFilterEnabled
     ? results.filter((item) => item.ok && item.class_passed === false).length
     : 0
-  const moveText =
-    params.move_low_to_del === true ? `，低分入 del ${deleted.moved} 张` : ''
+  const moveText = params.move_low_to_del === true ? `，低分入 del ${deleted.moved} 张` : ''
   const failedText = deleted.failed ? `，移动失败 ${deleted.failed} 张` : ''
-  const filterText =
-    params.keep_only_passed === true ? `，输出达标 ${outputFiles.length} 张` : ''
+  const filterText = params.keep_only_passed === true ? `，输出达标 ${outputFiles.length} 张` : ''
   const classText = classFilterEnabled ? `，分类过滤 ${rejected} 张` : ''
 
   return {

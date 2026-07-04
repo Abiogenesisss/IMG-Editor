@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import IconButton from './components/IconButton.vue'
 import { Copy, Minus, Moon, Square, Sun, X } from 'lucide-vue-next'
 import { mainNavItems, settingsNavItem, thanksNavItem } from './services/navigation'
+import { readStoredJson } from './composables/useLocalStorage'
 
 const router = useRouter()
 const route = useRoute()
@@ -76,11 +77,7 @@ const allNavItems = mainNavItems
 
 // --- 菜单显示设置 ---
 function loadMenuVisible() {
-  try {
-    return JSON.parse(localStorage.getItem('menu-visible') || '{}')
-  } catch {
-    return {}
-  }
+  return readStoredJson('menu-visible', {})
 }
 
 const menuVisibleConfig = ref(loadMenuVisible())

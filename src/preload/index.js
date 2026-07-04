@@ -24,6 +24,7 @@ const api = {
   readImagesRecursive: (folderPath) => ipcRenderer.invoke('read-images-recursive', folderPath),
   createWorkflowRunDir: (baseDir, name) =>
     ipcRenderer.invoke('create-workflow-run-dir', baseDir, name),
+  resolveWorkflowPath: (root, name) => ipcRenderer.invoke('resolve-workflow-path', root, name),
   copyWorkflowFiles: (files, outputDir) =>
     ipcRenderer.invoke('copy-workflow-files', files, outputDir),
   generateThumbnail: (filePath) => ipcRenderer.invoke('generate-thumbnail', filePath),

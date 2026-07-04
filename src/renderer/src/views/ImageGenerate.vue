@@ -3,6 +3,7 @@ import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'v
 import { FolderOpen, ImagePlus, Loader2, RefreshCw, Sparkles, Trash2, X } from 'lucide-vue-next'
 import { API_CONFIGS_UPDATED_EVENT, loadApiConfigs } from '../services/apiConfigs'
 import { useLocalStorage } from '../composables/useLocalStorage'
+import { resolveImageProvider } from '../../../shared/imageProviders'
 
 defineOptions({ name: 'ImageGenerate' })
 
@@ -71,16 +72,8 @@ const progressDone = ref(0)
 const progressTotal = ref(0)
 let removeProgressListener = null
 
-function providerOf(config = {}) {
-  config = config || {}
-  const value = `${config.model || ''} ${config.name || ''} ${config.endpoint || ''}`.toLowerCase()
-  if (/gpt[-_\s]?image|gpt[-_\s]?img|gpt.*\bimg\b/.test(value)) return 'gpt'
-  if (/nano[-_\s]?banana|gemini.*image|flash-image|pro-image/.test(value)) return 'nanobanana'
-  return ''
-}
-
 const supportedConfigs = computed(() =>
-  apiConfigs.value.filter((item) => item.enabled !== false && providerOf(item))
+  apiConfigs.value.filter((item) => item.enabled !== false && resolveImageProvider(item))
 )
 
 const selectedConfig = computed(() => {
@@ -92,7 +85,7 @@ const selectedConfig = computed(() => {
 })
 
 const selectedProvider = computed(() =>
-  selectedConfig.value ? providerOf(selectedConfig.value) : ''
+  selectedConfig.value ? resolveImageProvider(selectedConfig.value) : ''
 )
 const activeReferences = computed(() =>
   generationMode.value === 'image' ? referenceImages.value : []

@@ -136,7 +136,6 @@ function selectModel(key) {
 const generalThreshold = ref(0.35)
 const characterThreshold = ref(0.85)
 const replaceUnderscore = ref(true)
-const clV2ThresholdApplied = ref(false)
 // CL Tagger 类别开关:仅在选中 CL Tagger 时生效
 const keepCopyright = ref(true)
 const keepRating = ref(false)
@@ -146,10 +145,12 @@ const keepQuality = ref(false)
 
 const isClTagger = computed(() => selectedModel.value.startsWith('cl-tagger-'))
 
-watch(selectedModel, (key) => {
-  if (key === 'cl-tagger-v2_01a' && !clV2ThresholdApplied.value && generalThreshold.value === 0.35) {
-    generalThreshold.value = 0.55
-    clV2ThresholdApplied.value = true
+watch(selectedModel, (key, previousKey) => {
+  const selected = models.value.find((model) => model.key === key)
+  const previous = models.value.find((model) => model.key === previousKey)
+  const previousDefault = previous?.general_threshold ?? 0.35
+  if (generalThreshold.value === previousDefault) {
+    generalThreshold.value = selected?.general_threshold ?? 0.35
   }
 })
 
@@ -206,16 +207,15 @@ async function runTag() {
       keep_rating: keepRating.value,
       keep_meta: keepMeta.value,
       keep_model: keepModel.value,
-      keep_quality: keepQuality.value
+      keep_quality: keepQuality.value,
+      replace_underscore: replaceUnderscore.value
     })
     if (result.aborted) return
     if (result.success) {
       const newMap = { ...tagsMap.value }
       for (const item of result.results) {
         if (item.ok) {
-          newMap[item.file] = replaceUnderscore.value
-            ? item.tag_string.replace(/_/g, ' ')
-            : item.tag_string
+          newMap[item.file] = item.tag_string
         }
       }
       tagsMap.value = newMap

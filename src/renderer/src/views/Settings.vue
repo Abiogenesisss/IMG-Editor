@@ -19,6 +19,13 @@ import {
 } from 'lucide-vue-next'
 import { loadApiConfigs, saveApiConfigs } from '../services/apiConfigs'
 import { settingsMenuItems } from '../services/navigation'
+import { readStoredJson } from '../composables/useLocalStorage'
+import {
+  resolveGeminiInteractionsEndpoint,
+  resolveImageProvider,
+  resolveOpenAIImageEndpoint,
+  trimTrailingSlash
+} from '../../../shared/imageProviders'
 
 defineOptions({ name: 'Settings' })
 
@@ -82,21 +89,12 @@ async function syncGpuToBackend(enabled) {
 const allMenuItems = settingsMenuItems
 
 function loadMenuConfig() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('menu-visible') || '{}')
-    // 默认全部显示
-    const result = {}
-    allMenuItems.forEach((item) => {
-      result[item.path] = item.required ? true : saved[item.path] !== false
-    })
-    return result
-  } catch {
-    const result = {}
-    allMenuItems.forEach((item) => {
-      result[item.path] = true
-    })
-    return result
-  }
+  const saved = readStoredJson('menu-visible', {})
+  const result = {}
+  allMenuItems.forEach((item) => {
+    result[item.path] = item.required ? true : saved[item.path] !== false
+  })
+  return result
 }
 
 const menuVisible = ref(loadMenuConfig())
@@ -318,7 +316,8 @@ async function fetchModelOptions(seq) {
     if (seq !== modelFetchSeq) return
     if (result.success) {
       modelOptions.value = result.models || []
-      if (!formModel.value.trim() && modelOptions.value[0]) formModel.value = modelOptions.value[0].id
+      if (!formModel.value.trim() && modelOptions.value[0])
+        formModel.value = modelOptions.value[0].id
       modelDropOpen.value = false
       modelFilter.value = ''
     } else {
@@ -382,26 +381,22 @@ const previewUrl = computed(() => {
   const endpoint = formEndpoint.value.trim()
   const model = formModel.value.trim().toLowerCase()
   if (!endpoint) return ''
-  if (/gpt[-_\s]?image|gpt[-_\s]?img|gpt.*\bimg\b/.test(model)) {
-    const base = endpoint.replace(/\/+$/, '')
-    if (/\/images\/(generations|edits)$/i.test(base)) return base
-    if (/\/v\d+$/i.test(base)) return base + '/images/generations'
-    return base + '/v1/images/generations'
-  }
-  if (/nano[-_\s]?banana|gemini.*image|flash-image|pro-image/.test(model)) {
-    const base = endpoint.replace(/\/+$/, '')
-    if (/\/interactions$/i.test(base)) return base
-    return base + '/interactions'
-  }
+  const provider = resolveImageProvider({
+    name: formName.value,
+    model,
+    endpoint
+  })
+  if (provider === 'gpt') return resolveOpenAIImageEndpoint(endpoint)
+  if (provider === 'nanobanana') return resolveGeminiInteractionsEndpoint(endpoint)
   if (model.includes('gemini')) {
     return endpoint
   }
   if (model.includes('claude')) {
-    const base = endpoint.replace(/\/+$/, '')
+    const base = trimTrailingSlash(endpoint)
     return base + '/v1/messages'
   }
   // OpenAI 兼容
-  const base = endpoint.replace(/\/+$/, '')
+  const base = trimTrailingSlash(endpoint)
   return base + '/chat/completions'
 })
 </script>
@@ -564,106 +559,111 @@ const previewUrl = computed(() => {
         <Teleport v-if="showForm" :to="formTeleportTarget" defer>
           <Transition name="form-fade" appear>
             <div class="config-form">
-            <div class="form-title">
-              {{ editingId ? '编辑 API 配置' : '添加 API 配置' }}
-              <button class="form-close" @click="closeForm">
-                <X :size="14" :stroke-width="2" aria-hidden="true" />
-              </button>
-            </div>
-            <div class="form-row two-col">
-              <div class="form-field">
-                <label class="form-label">配置名称</label>
-                <input v-model="formName" class="form-input" type="text" placeholder="Deepseek" />
-              </div>
-              <div class="form-field">
-                <label class="form-label">MODEL NAME</label>
-                <div v-if="modelSelectOptions.length" class="model-combobox">
-                  <button
-                    class="model-combobox-trigger"
-                    type="button"
-                    @click.stop="modelDropOpen = !modelDropOpen"
-                  >
-                    <span>{{ selectedModelText }}</span>
-                    <ChevronDown
-                      :class="['model-combobox-arrow', { open: modelDropOpen }]"
-                      :size="14"
-                      :stroke-width="2.2"
-                      aria-hidden="true"
-                    />
-                  </button>
-                  <Transition name="model-menu">
-                    <div v-if="modelDropOpen" class="model-combobox-menu" @click.stop>
-                      <input
-                        v-model="modelFilter"
-                        class="model-combobox-search"
-                        type="text"
-                        placeholder="搜索模型"
-                      />
-                      <div class="model-combobox-list">
-                        <button
-                          v-for="model in filteredModelOptions"
-                          :key="model.id"
-                          :class="['model-combobox-item', { active: formModel === model.id }]"
-                          type="button"
-                          @click="selectFormModel(model.id)"
-                        >
-                          <span>{{ model.name || model.id }}</span>
-                          <small v-if="model.name && model.name !== model.id">{{ model.id }}</small>
-                        </button>
-                        <div v-if="filteredModelOptions.length === 0" class="model-combobox-empty">
-                          没有匹配模型
-                        </div>
-                      </div>
-                    </div>
-                  </Transition>
-                </div>
-                <input
-                  v-else
-                  v-model="formModel"
-                  class="form-input"
-                  type="text"
-                  placeholder="deepseek-reasoner"
-                />
-                <span v-if="modelLoading" class="model-fetch-hint">正在读取模型列表...</span>
-                <span v-else-if="modelError" class="model-fetch-hint error">
-                  {{ modelError }}，可手动填写
-                </span>
-              </div>
-            </div>
-            <div class="form-field">
-              <label class="form-label">API ENDPOINT</label>
-              <div class="form-input-icon">
-                <Globe2 :size="14" :stroke-width="2" aria-hidden="true" />
-                <input
-                  v-model="formEndpoint"
-                  class="form-input with-icon"
-                  type="text"
-                  placeholder="https://api.deepseek.com/v1"
-                />
-              </div>
-              <span v-if="previewUrl" class="endpoint-preview">预览：{{ previewUrl }}</span>
-            </div>
-            <div class="form-field">
-              <label class="form-label">API KEY</label>
-              <div class="form-input-icon right">
-                <input
-                  v-model="formApiKey"
-                  class="form-input with-icon-right"
-                  :type="showApiKey ? 'text' : 'password'"
-                  placeholder=""
-                />
-                <button class="eye-btn" @click="showApiKey = !showApiKey">
-                  <Eye v-if="!showApiKey" :size="16" :stroke-width="2" aria-hidden="true" />
-                  <EyeOff v-else :size="16" :stroke-width="2" aria-hidden="true" />
+              <div class="form-title">
+                {{ editingId ? '编辑 API 配置' : '添加 API 配置' }}
+                <button class="form-close" @click="closeForm">
+                  <X :size="14" :stroke-width="2" aria-hidden="true" />
                 </button>
               </div>
-            </div>
-            <div class="form-actions">
-              <button class="submit-btn" @click="submitForm">
-                <Copy :size="14" :stroke-width="2" aria-hidden="true" />
-                {{ editingId ? '保存修改' : '添加配置' }}
-              </button>
-            </div>
+              <div class="form-row two-col">
+                <div class="form-field">
+                  <label class="form-label">配置名称</label>
+                  <input v-model="formName" class="form-input" type="text" placeholder="Deepseek" />
+                </div>
+                <div class="form-field">
+                  <label class="form-label">MODEL NAME</label>
+                  <div v-if="modelSelectOptions.length" class="model-combobox">
+                    <button
+                      class="model-combobox-trigger"
+                      type="button"
+                      @click.stop="modelDropOpen = !modelDropOpen"
+                    >
+                      <span>{{ selectedModelText }}</span>
+                      <ChevronDown
+                        :class="['model-combobox-arrow', { open: modelDropOpen }]"
+                        :size="14"
+                        :stroke-width="2.2"
+                        aria-hidden="true"
+                      />
+                    </button>
+                    <Transition name="model-menu">
+                      <div v-if="modelDropOpen" class="model-combobox-menu" @click.stop>
+                        <input
+                          v-model="modelFilter"
+                          class="model-combobox-search"
+                          type="text"
+                          placeholder="搜索模型"
+                        />
+                        <div class="model-combobox-list">
+                          <button
+                            v-for="model in filteredModelOptions"
+                            :key="model.id"
+                            :class="['model-combobox-item', { active: formModel === model.id }]"
+                            type="button"
+                            @click="selectFormModel(model.id)"
+                          >
+                            <span>{{ model.name || model.id }}</span>
+                            <small v-if="model.name && model.name !== model.id">{{
+                              model.id
+                            }}</small>
+                          </button>
+                          <div
+                            v-if="filteredModelOptions.length === 0"
+                            class="model-combobox-empty"
+                          >
+                            没有匹配模型
+                          </div>
+                        </div>
+                      </div>
+                    </Transition>
+                  </div>
+                  <input
+                    v-else
+                    v-model="formModel"
+                    class="form-input"
+                    type="text"
+                    placeholder="deepseek-reasoner"
+                  />
+                  <span v-if="modelLoading" class="model-fetch-hint">正在读取模型列表...</span>
+                  <span v-else-if="modelError" class="model-fetch-hint error">
+                    {{ modelError }}，可手动填写
+                  </span>
+                </div>
+              </div>
+              <div class="form-field">
+                <label class="form-label">API ENDPOINT</label>
+                <div class="form-input-icon">
+                  <Globe2 :size="14" :stroke-width="2" aria-hidden="true" />
+                  <input
+                    v-model="formEndpoint"
+                    class="form-input with-icon"
+                    type="text"
+                    placeholder="https://api.deepseek.com/v1"
+                  />
+                </div>
+                <span v-if="previewUrl" class="endpoint-preview">预览：{{ previewUrl }}</span>
+              </div>
+              <div class="form-field">
+                <label class="form-label">API KEY</label>
+                <div class="form-input-icon right">
+                  <input
+                    v-model="formApiKey"
+                    class="form-input with-icon-right"
+                    :type="showApiKey ? 'text' : 'password'"
+                    placeholder=""
+                  />
+                  <button class="eye-btn" @click="showApiKey = !showApiKey">
+                    <Eye v-if="!showApiKey" :size="16" :stroke-width="2" aria-hidden="true" />
+                    <EyeOff v-else :size="16" :stroke-width="2" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="submit-btn" @click="submitForm">
+                  <Copy :size="14" :stroke-width="2" aria-hidden="true" />
+                  {{ editingId ? '保存修改' : '添加配置' }}
+                </button>
+              </div>
             </div>
           </Transition>
         </Teleport>
@@ -673,30 +673,26 @@ const previewUrl = computed(() => {
           <span>暂无 API 配置，点击上方按钮添加</span>
         </div>
         <TransitionGroup name="list-fade" tag="div" class="config-list">
-          <div
-            v-for="cfg in apiConfigs"
-            :key="cfg.id"
-            class="config-entry"
-          >
+          <div v-for="cfg in apiConfigs" :key="cfg.id" class="config-entry">
             <div :class="['config-item', { disabled: !cfg.enabled }]">
-            <span :class="['config-toggle', { on: cfg.enabled }]" @click="toggleEnabled(cfg)">
-              <span class="config-toggle-knob"></span>
-            </span>
-            <div class="config-info">
-              <div class="config-name-row">
-                <span class="config-name">{{ cfg.name }}</span>
-                <span class="config-model-badge">{{ cfg.model }}</span>
+              <span :class="['config-toggle', { on: cfg.enabled }]" @click="toggleEnabled(cfg)">
+                <span class="config-toggle-knob"></span>
+              </span>
+              <div class="config-info">
+                <div class="config-name-row">
+                  <span class="config-name">{{ cfg.name }}</span>
+                  <span class="config-model-badge">{{ cfg.model }}</span>
+                </div>
+                <span class="config-endpoint">{{ cfg.endpoint || '(默认官方地址)' }}</span>
               </div>
-              <span class="config-endpoint">{{ cfg.endpoint || '(默认官方地址)' }}</span>
-            </div>
-            <div class="config-actions">
-              <button class="config-action-btn" title="编辑" @click="openEditForm(cfg)">
-                <Pencil :size="15" :stroke-width="2" aria-hidden="true" />
-              </button>
-              <button class="config-action-btn delete" title="删除" @click="deleteConfig(cfg.id)">
-                <Trash2 :size="15" :stroke-width="2" aria-hidden="true" />
-              </button>
-            </div>
+              <div class="config-actions">
+                <button class="config-action-btn" title="编辑" @click="openEditForm(cfg)">
+                  <Pencil :size="15" :stroke-width="2" aria-hidden="true" />
+                </button>
+                <button class="config-action-btn delete" title="删除" @click="deleteConfig(cfg.id)">
+                  <Trash2 :size="15" :stroke-width="2" aria-hidden="true" />
+                </button>
+              </div>
             </div>
             <div :id="formAnchorId(cfg.id)" class="config-form-anchor"></div>
           </div>

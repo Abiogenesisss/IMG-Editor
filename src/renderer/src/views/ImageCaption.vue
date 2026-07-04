@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onActivated, onBeforeUnmount } from 'v
 import { useRoute } from 'vue-router'
 import { useImageBrowser } from '../composables/useImageBrowser'
 import { useGridObserver } from '../composables/useGridObserver'
-import { useLocalStorage } from '../composables/useLocalStorage'
+import { readStoredJson, useLocalStorage } from '../composables/useLocalStorage'
 import {
   API_CONFIGS_UPDATED_EVENT,
   loadApiConfigs,
@@ -88,9 +88,8 @@ async function refreshApiConfigs() {
 // ===================== API 选择 =====================
 const multiApiMode = useLocalStorage('caption-multi-api', false)
 const selectedApiId = useLocalStorage('caption-selected-api', '')
-const selectedApiIds = ref(
-  new Set(JSON.parse(localStorage.getItem('caption-selected-apis') || '[]'))
-)
+const storedSelectedApiIds = readStoredJson('caption-selected-apis', [])
+const selectedApiIds = ref(new Set(Array.isArray(storedSelectedApiIds) ? storedSelectedApiIds : []))
 watch(
   selectedApiIds,
   (v) => localStorage.setItem('caption-selected-apis', JSON.stringify([...v])),

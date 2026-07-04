@@ -167,7 +167,8 @@ def _yolo_detect(session, image, conf_threshold=0.3, iou_threshold=0.5):
 
 
 def three_stage_split_batch(files, output_dir, person_conf=0.3, halfbody_conf=0.3,
-                            head_conf=0.3, head_scale=1.5, progress_cb=None):
+                            head_conf=0.3, head_scale=1.5, progress_cb=None,
+                            cancel_event=None):
     """批量三阶段裁剪：全身 / 半身 / 头像"""
     person_sess = _load_session(_PERSON_MODEL_PATH)
     halfbody_sess = _load_session(_HALFBODY_MODEL_PATH)
@@ -179,6 +180,8 @@ def three_stage_split_batch(files, output_dir, person_conf=0.3, halfbody_conf=0.
     results = []
 
     for idx, filepath in enumerate(files):
+        if cancel_event is not None and cancel_event.is_set():
+            break
         try:
             image = Image.open(filepath).convert("RGB")
             basename = os.path.splitext(os.path.basename(filepath))[0]

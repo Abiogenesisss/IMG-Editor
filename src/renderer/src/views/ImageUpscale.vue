@@ -1,11 +1,19 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
 import { useGridObserver } from '../composables/useGridObserver'
+import { createFallbackUpscaleCatalog, loadUpscaleCatalog } from '../services/upscaleModels'
 import FolderRow from '../components/FolderRow.vue'
 import IconButton from '../components/IconButton.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
 import { ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-vue-next'
+import {
+  getUpscaleDenoiseOptions,
+  getUpscaleScaleOptions,
+  getUpscaleStyleOptions,
+  listUpscaleModels,
+  validateUpscaleSelection
+} from '../../../shared/upscaleCatalog'
 
 defineOptions({ name: 'ImageUpscale' })
 
@@ -55,98 +63,40 @@ function closePanel() {
   denoiseDropOpen.value = false
 }
 
-// --- 模型定义 ---
-const modelOptions = [
-  { value: 'real-cugan', label: 'Real-CUGAN' },
-  { value: 'real-esrgan', label: 'Real-ESRGAN' },
-  { value: 'waifu2x', label: 'Waifu2x' }
-]
-
+const upscaleCatalog = ref(createFallbackUpscaleCatalog())
+const upscaleError = ref('')
 const model = ref('real-cugan')
-
-// --- Waifu2x 风格 & TTA ---
-const w2xStyleOptions = [
-  { value: 'art', label: 'Art' },
-  { value: 'art_scan', label: 'Art Scan' },
-  { value: 'photo', label: 'Photo' }
-]
 const w2xStyle = ref('art')
 const tta = ref(false)
-
-// --- 各模型参数配置 ---
-const modelConfigs = {
-  'real-cugan': {
-    scales: [
-      { value: 2, label: '2X' },
-      { value: 3, label: '3X' },
-      { value: 4, label: '4X' }
-    ],
-    getDenoiseOptions(scale) {
-      if (scale === 2) {
-        return [
-          { value: 'no-denoise', label: '无降噪' },
-          { value: 'denoise1x', label: '降噪1X' },
-          { value: 'denoise2x', label: '降噪2X' },
-          { value: 'denoise3x', label: '降噪3X' }
-        ]
-      }
-      return [{ value: 'denoise3x', label: '降噪3X' }]
-    },
-    defaultScale: 2,
-    defaultDenoise: 'denoise3x'
-  },
-  'real-esrgan': {
-    scales: [
-      { value: 2, label: '2X' },
-      { value: 4, label: '4X' }
-    ],
-    getDenoiseOptions() {
-      return [{ value: 'none', label: '默认' }]
-    },
-    defaultScale: 4,
-    defaultDenoise: 'none'
-  },
-  waifu2x: {
-    scales: [
-      { value: 1, label: '1X' },
-      { value: 2, label: '2X' },
-      { value: 4, label: '4X' }
-    ],
-    getDenoiseOptions() {
-      return [
-        { value: 'no-denoise', label: '(-) None' },
-        { value: 'denoise0', label: '(0) Low' },
-        { value: 'denoise1', label: '(1) Medium' },
-        { value: 'denoise2', label: '(2) High' },
-        { value: 'denoise3', label: '(3) Highest' }
-      ]
-    },
-    defaultScale: 2,
-    defaultDenoise: 'denoise2'
-  }
-}
 
 // --- 超分参数 ---
 const scale = ref(2)
 const denoise = ref('denoise3x')
 const previewMode = ref('slider') // slider | side | stack
 
-const currentConfig = computed(() => modelConfigs[model.value])
-
-const scaleOptions = computed(() => currentConfig.value?.scales || [])
-
-const denoiseOptions = computed(() => {
-  const config = currentConfig.value
-  if (!config) return []
-  return config.getDenoiseOptions(scale.value)
-})
+const modelOptions = computed(() => listUpscaleModels(upscaleCatalog.value))
+const currentConfig = computed(() => upscaleCatalog.value[model.value])
+const scaleOptions = computed(() => getUpscaleScaleOptions(upscaleCatalog.value, model.value))
+const denoiseOptions = computed(() =>
+  getUpscaleDenoiseOptions(upscaleCatalog.value, model.value, scale.value)
+)
+const w2xStyleOptions = computed(() => getUpscaleStyleOptions(upscaleCatalog.value, model.value))
+const selectionValidation = computed(() =>
+  validateUpscaleSelection(upscaleCatalog.value, {
+    model: model.value,
+    scale: scale.value,
+    denoise: denoise.value,
+    style: w2xStyle.value
+  })
+)
 
 // 切换模型时，重置参数
 watch(model, (val) => {
-  const config = modelConfigs[val]
+  const config = upscaleCatalog.value[val]
   if (config) {
     scale.value = config.defaultScale
     denoise.value = config.defaultDenoise
+    if (!config.styles.includes(w2xStyle.value)) w2xStyle.value = config.styles[0] || 'art'
   }
   if (val !== 'waifu2x') {
     tta.value = false
@@ -161,6 +111,33 @@ watch(scale, () => {
     denoise.value = config?.defaultDenoise || valid[0] || 'none'
   }
 })
+
+async function refreshUpscaleCatalog() {
+  try {
+    upscaleCatalog.value = await loadUpscaleCatalog()
+    const available = listUpscaleModels(upscaleCatalog.value).filter((item) => item.available)
+    if (!available.some((item) => item.value === model.value)) {
+      model.value = available[0]?.value || model.value
+    }
+    if (!scaleOptions.value.some((item) => item.value === scale.value)) {
+      const defaultScale = currentConfig.value?.defaultScale
+      scale.value = scaleOptions.value.some((item) => item.value === defaultScale)
+        ? defaultScale
+        : (scaleOptions.value[0]?.value ?? 2)
+    }
+    if (!denoiseOptions.value.some((item) => item.value === denoise.value)) {
+      const defaultDenoise = currentConfig.value?.defaultDenoise
+      denoise.value = denoiseOptions.value.some((item) => item.value === defaultDenoise)
+        ? defaultDenoise
+        : (denoiseOptions.value[0]?.value ?? 'none')
+    }
+    upscaleError.value = selectionValidation.value.valid ? '' : selectionValidation.value.error
+  } catch (err) {
+    upscaleError.value = err.message || '超分模型列表读取失败'
+  }
+}
+
+onMounted(refreshUpscaleCatalog)
 
 const previewModes = [
   { value: 'slider', label: '叠图' },
@@ -185,8 +162,12 @@ const sliderPos = ref(50)
 
 async function doUpscalePreview() {
   const file = selectedImages.value.values().next().value
-  if (!file) return
+  if (!file || !selectionValidation.value.valid) {
+    upscaleError.value = selectionValidation.value.error || ''
+    return
+  }
   upscalePreviewLoading.value = true
+  upscaleError.value = ''
   try {
     const result = await window.api.callPython('/preview-upscale', {
       file: file,
@@ -199,7 +180,11 @@ async function doUpscalePreview() {
     if (result.ok) {
       upscalePreviewData.value = result
       sliderPos.value = 50
+    } else {
+      upscaleError.value = result.error || '超分预览失败'
     }
+  } catch (err) {
+    upscaleError.value = err.message || '超分预览失败'
   } finally {
     upscalePreviewLoading.value = false
   }
@@ -249,9 +234,14 @@ function updateSliderPos(e) {
 
 // --- 批量超分执行 ---
 async function runUpscale() {
+  if (!selectionValidation.value.valid) {
+    upscaleError.value = selectionValidation.value.error
+    return
+  }
   activePanel.value = null
   const outDir = await getOutputDir()
   processingAction.value = 'upscale'
+  upscaleError.value = ''
   try {
     const files =
       selectedCount.value > 0 ? [...selectedImages.value] : images.value.map((i) => i.path)
@@ -265,14 +255,23 @@ async function runUpscale() {
       tta: tta.value || false
     })
     if (result.aborted) return
+    if (!result.success) upscaleError.value = result.error || '超分失败'
+  } catch (err) {
+    upscaleError.value = err.message || '超分失败'
   } finally {
     if (processingAction.value === 'upscale') processingAction.value = null
   }
 }
 
-const canRun = computed(() => imageCount.value > 0 && !processingAction.value)
+const canRun = computed(
+  () => imageCount.value > 0 && selectionValidation.value.valid && !processingAction.value
+)
 const canPreview = computed(
-  () => selectedCount.value > 0 && !upscalePreviewLoading.value && !processingAction.value
+  () =>
+    selectedCount.value > 0 &&
+    selectionValidation.value.valid &&
+    !upscalePreviewLoading.value &&
+    !processingAction.value
 )
 </script>
 
@@ -324,8 +323,11 @@ const canPreview = computed(
                 <label
                   v-for="opt in modelOptions"
                   :key="opt.value"
-                  :class="['format-tag', { selected: model === opt.value }]"
-                  @click="model = opt.value"
+                  :class="[
+                    'format-tag',
+                    { selected: model === opt.value, disabled: !opt.available }
+                  ]"
+                  @click="opt.available && (model = opt.value)"
                 >
                   {{ opt.label }}
                 </label>
@@ -409,6 +411,11 @@ const canPreview = computed(
           {{ processingAction === 'upscale' ? '处理中...' : '执行超分' }}
         </button>
       </div>
+    </div>
+
+    <div v-if="upscaleError" class="upscale-error">
+      <span>{{ upscaleError }}</span>
+      <button type="button" @click="upscaleError = ''">关闭</button>
     </div>
 
     <!-- 预览模式栏 -->
@@ -960,5 +967,31 @@ const canPreview = computed(
 .upscale-run-btn:hover:not(:disabled) {
   background: var(--color-accent-hover);
   border-color: var(--color-accent-hover);
+}
+
+.format-tag.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.upscale-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-error-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-error);
+  background: var(--color-error-light);
+  font-size: 12px;
+}
+
+.upscale-error button {
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
 }
 </style>

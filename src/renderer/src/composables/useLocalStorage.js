@@ -11,7 +11,7 @@ export function useLocalStorage(key, defaultValue, options = {}) {
   const type = options.type || inferType(defaultValue)
 
   const stored = localStorage.getItem(key)
-  const initial = stored !== null ? deserialize(stored, type) : defaultValue
+  const initial = stored !== null ? deserialize(stored, type, defaultValue) : defaultValue
 
   const data = ref(initial)
 
@@ -32,23 +32,33 @@ function inferType(value) {
   return 'string'
 }
 
-function deserialize(raw, type) {
+function deserialize(raw, type, defaultValue) {
   switch (type) {
     case 'boolean':
       return raw === 'true'
-    case 'number':
-      return parseInt(raw) || 0
-    case 'float':
-      return parseFloat(raw) || 0
+    case 'number': {
+      const parsed = Number.parseInt(raw, 10)
+      return Number.isFinite(parsed) ? parsed : defaultValue
+    }
+    case 'float': {
+      const parsed = Number.parseFloat(raw)
+      return Number.isFinite(parsed) ? parsed : defaultValue
+    }
     case 'json':
       try {
-        return JSON.parse(raw)
+        return JSON.parse(raw) ?? defaultValue
       } catch {
-        return null
+        return defaultValue
       }
     default:
       return raw
   }
+}
+
+export function readStoredJson(key, defaultValue) {
+  const raw = localStorage.getItem(key)
+  if (raw === null) return defaultValue
+  return deserialize(raw, 'json', defaultValue)
 }
 
 function serialize(value, type) {

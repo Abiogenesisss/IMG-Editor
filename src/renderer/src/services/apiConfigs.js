@@ -1,3 +1,5 @@
+import { resolveImageProvider } from '../../../shared/imageProviders'
+
 export const API_CONFIGS_UPDATED_EVENT = 'api-configs-updated'
 
 export function serializeApiConfigs(list) {
@@ -7,7 +9,8 @@ export function serializeApiConfigs(list) {
     model: config.model,
     endpoint: config.endpoint,
     apiKey: config.apiKey,
-    enabled: config.enabled !== false
+    enabled: config.enabled !== false,
+    provider: resolveImageProvider({ ...config, provider: '' })
   }))
 }
 

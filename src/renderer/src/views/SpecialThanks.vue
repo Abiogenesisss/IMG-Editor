@@ -11,7 +11,10 @@ const sourceProjects = [
   { name: 'PixAI Tagger', url: 'https://huggingface.co/deepghs/pixai-tagger-v0.9-onnx' },
   { name: 'CL Tagger', url: 'https://huggingface.co/cella110n/cl_tagger' },
   { name: 'SmilingWolf WD Tagger', url: 'https://huggingface.co/SmilingWolf' },
-  { name: 'DeepGHS anime_classification', url: 'https://huggingface.co/deepghs/anime_classification' },
+  {
+    name: 'DeepGHS anime_classification',
+    url: 'https://huggingface.co/deepghs/anime_classification'
+  },
   { name: 'DeepGHS anime_aesthetic', url: 'https://huggingface.co/deepghs/anime_aesthetic' }
 ]
 </script>

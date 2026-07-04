@@ -113,7 +113,14 @@ def _extract_clip_feats(outputs):
     return clip_feats / norms
 
 
-def _extract_csd_batch(files, model_path=None, batch_size=16, progress_cb=None, feature_fn=None):
+def _extract_csd_batch(
+    files,
+    model_path=None,
+    batch_size=16,
+    progress_cb=None,
+    feature_fn=None,
+    cancel_event=None,
+):
     session = _load_csd(model_path)
     input_name = session.get_inputs()[0].name
     input_dtype = _get_session_input_dtype(session)
@@ -122,6 +129,10 @@ def _extract_csd_batch(files, model_path=None, batch_size=16, progress_cb=None, 
     done = 0
 
     for i in range(0, total, batch_size):
+        if cancel_event is not None and cancel_event.is_set():
+            from tasks.parallel import CancelledError
+
+            raise CancelledError("task cancelled")
         batch_files = files[i:i + batch_size]
         arrays = []
         indices = []
@@ -156,7 +167,9 @@ def _extract_csd_batch(files, model_path=None, batch_size=16, progress_cb=None, 
     return results
 
 
-def extract_style_batch(files, model_path=None, batch_size=16, progress_cb=None):
+def extract_style_batch(
+    files, model_path=None, batch_size=16, progress_cb=None, cancel_event=None
+):
     """Batch-extract CSD style features."""
     return _extract_csd_batch(
         files,
@@ -164,10 +177,13 @@ def extract_style_batch(files, model_path=None, batch_size=16, progress_cb=None)
         batch_size=batch_size,
         progress_cb=progress_cb,
         feature_fn=lambda outputs: _l2_normalize_rows(outputs[2]),
+        cancel_event=cancel_event,
     )
 
 
-def extract_semantic_batch(files, model_path=None, batch_size=16, progress_cb=None):
+def extract_semantic_batch(
+    files, model_path=None, batch_size=16, progress_cb=None, cancel_event=None
+):
     """Batch-extract CLIP semantic features."""
     return _extract_csd_batch(
         files,
@@ -175,6 +191,7 @@ def extract_semantic_batch(files, model_path=None, batch_size=16, progress_cb=No
         batch_size=batch_size,
         progress_cb=progress_cb,
         feature_fn=_extract_clip_feats,
+        cancel_event=cancel_event,
     )
 
 
@@ -186,6 +203,7 @@ def extract_fusion_batch(
     weight_style=0.0,
     weight_semantic=0.0,
     weight_color=0.0,
+    cancel_event=None,
 ):
     """Extract fused features by concatenating style/semantic/color vectors."""
     total = len(files)
@@ -211,15 +229,24 @@ def extract_fusion_batch(
             progress_cb(steps_done + d, total_steps)
 
     if weight_style > 0:
-        style_results = extract_style_batch(files, model_path, batch_size, sub_progress)
+        style_results = extract_style_batch(
+            files, model_path, batch_size, sub_progress, cancel_event
+        )
         steps_done += total
     if weight_semantic > 0:
-        semantic_results = extract_semantic_batch(files, model_path, batch_size, sub_progress)
+        semantic_results = extract_semantic_batch(
+            files, model_path, batch_size, sub_progress, cancel_event
+        )
         steps_done += total
     if weight_color > 0:
         from tasks.parallel import run_parallel
 
-        color_results = run_parallel(extract_color_one, [(f,) for f in files], sub_progress)
+        color_results = run_parallel(
+            extract_color_one,
+            [(f,) for f in files],
+            sub_progress,
+            cancel_event=cancel_event,
+        )
         steps_done += total
 
     results = []

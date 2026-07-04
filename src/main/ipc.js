@@ -8,6 +8,12 @@ import { pathToFileURL } from 'url'
 import { Blob } from 'buffer'
 import { grantLocalFileAccess } from './localFileAccess'
 import { forceStopTunnel, registerTunnelIPC, stopTunnel } from './tunnelManager'
+import {
+  resolveGeminiInteractionsEndpoint,
+  resolveImageProvider,
+  resolveOpenAIImageEndpoint,
+  trimTrailingSlash
+} from '../shared/imageProviders'
 
 const IMAGE_EXTS = new Set([
   '.png',
@@ -50,6 +56,7 @@ const GRAB_TYPE_TO_EXT = new Map([
   ['image/tiff', '.tiff'],
   ['image/avif', '.avif']
 ])
+const RESERVED_FILENAME_CHARS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
 const PYTHON_ENDPOINTS = new Set([
   '/mirror-flip',
   '/resolution-filter',
@@ -370,7 +377,8 @@ function waitForProcessExit(child, timeoutMs) {
 async function requestBackendControl(
   endpoint,
   timeoutMs = BACKEND_CONTROL_TIMEOUT_MS,
-  port = pythonPort
+  port = pythonPort,
+  body = {}
 ) {
   if (!port) return false
 
@@ -381,7 +389,7 @@ async function requestBackendControl(
         'Content-Type': 'application/json',
         'X-IMG-Editor-Token': pythonAuthToken
       },
-      body: '{}',
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs)
     })
     return resp.ok
@@ -471,7 +479,7 @@ function apiConfigsPath() {
 }
 
 function normalizeApiConfig(config = {}) {
-  return {
+  const normalized = {
     id: String(config.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 6)),
     name: String(config.name || ''),
     model: String(config.model || ''),
@@ -479,6 +487,7 @@ function normalizeApiConfig(config = {}) {
     apiKey: String(config.apiKey || ''),
     enabled: config.enabled !== false
   }
+  return { ...normalized, provider: resolveImageProvider({ ...config, ...normalized }) }
 }
 
 function encryptApiKey(apiKey) {
@@ -509,7 +518,8 @@ async function readApiConfigs() {
         model: String(config.model || ''),
         endpoint: String(config.endpoint || ''),
         apiKey: decryptApiKey(config.apiKeyProtected),
-        enabled: config.enabled !== false
+        enabled: config.enabled !== false,
+        provider: resolveImageProvider(config)
       }))
       .filter((config) => config.id)
   } catch (err) {
@@ -548,26 +558,6 @@ async function migrateApiConfigs(legacyConfigs) {
 
 function imageGenerationDefaultsDir() {
   return join(app.getPath('userData'), 'generated_images')
-}
-
-function isGptImageModel(config = {}) {
-  const value = `${config.model || ''} ${config.name || ''}`.toLowerCase()
-  return /gpt[-_\s]?image|gpt[-_\s]?img|gpt.*\bimg\b/.test(value)
-}
-
-function isNanoBananaModel(config = {}) {
-  const value = `${config.model || ''} ${config.name || ''} ${config.endpoint || ''}`.toLowerCase()
-  return /nano[-_\s]?banana|gemini.*image|flash-image|pro-image/.test(value)
-}
-
-function resolveImageProvider(config = {}) {
-  if (isGptImageModel(config)) return 'gpt'
-  if (isNanoBananaModel(config)) return 'nanobanana'
-  return ''
-}
-
-function trimTrailingSlash(value) {
-  return String(value || '').replace(/\/+$/, '')
 }
 
 function resolveModelListRequest(endpoint, apiKey) {
@@ -631,67 +621,28 @@ async function listApiModels(_event, config = {}) {
   }
 }
 
-function resolveOpenAIImageEndpoint(endpoint) {
-  const raw = trimTrailingSlash(endpoint || 'https://api.openai.com/v1')
-  if (/\/images\/edits$/i.test(raw)) {
-    return raw.replace(/\/images\/edits$/i, '/images/generations')
-  }
-  if (/\/images\/generations$/i.test(raw)) return raw
-  if (/\/v\d+$/i.test(raw)) return `${raw}/images/generations`
-  try {
-    const url = new URL(raw)
-    if (url.pathname === '/' || url.pathname === '') {
-      return `${raw}/v1/images/generations`
-    }
-  } catch {
-    /* use as a base path */
-  }
-  return `${raw}/images/generations`
-}
-
-function resolveOpenAIImageEditEndpoint(endpoint) {
-  const raw = trimTrailingSlash(endpoint || 'https://api.openai.com/v1')
-  if (/\/images\/generations$/i.test(raw)) {
-    return raw.replace(/\/images\/generations$/i, '/images/edits')
-  }
-  if (/\/images\/edits$/i.test(raw)) return raw
-  if (/\/v\d+$/i.test(raw)) return `${raw}/images/edits`
-  try {
-    const url = new URL(raw)
-    if (url.pathname === '/' || url.pathname === '') {
-      return `${raw}/v1/images/edits`
-    }
-  } catch {
-    /* use as a base path */
-  }
-  return `${raw}/images/edits`
-}
-
-function resolveGeminiInteractionsEndpoint(endpoint) {
-  const raw = trimTrailingSlash(endpoint || 'https://generativelanguage.googleapis.com/v1beta')
-  if (/\/interactions$/i.test(raw)) return raw
-  return `${raw}/interactions`
-}
-
 function normalizeImageCount(value) {
   const count = Number.parseInt(value, 10)
   if (!Number.isFinite(count)) return 1
   return Math.max(1, Math.min(count, 4))
 }
 
-function sanitizeFilenameSegment(value, fallback = 'image') {
-  const reservedChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+function sanitizeSegment(
+  value,
+  fallback = 'image',
+  { limit = 80, whitespace = '_', trim = false } = {}
+) {
   const cleaned = String(value || fallback)
     .split('')
-    .map((char) => (reservedChars.has(char) || char.charCodeAt(0) < 32 ? '_' : char))
+    .map((char) => (RESERVED_FILENAME_CHARS.has(char) || char.charCodeAt(0) < 32 ? '_' : char))
     .join('')
-    .replace(/\s+/g, '_')
+    .replace(/\s+/g, whitespace)
     .replace(/\.+$/g, '')
-    .slice(0, 70)
-  return cleaned || fallback
+  const normalized = trim ? cleaned.trim() : cleaned
+  return (normalized || fallback).slice(0, limit)
 }
 
-function imageGenerationTimestamp() {
+function timestamp() {
   const d = new Date()
   const pad = (value) => String(value).padStart(2, '0')
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
@@ -856,10 +807,11 @@ async function saveGeneratedImage(outputDir, source, meta) {
   if (buffer.length === 0) throw new Error('Generated image is empty')
 
   const ext = extensionFromMime(mimeType, meta.outputFormat || 'png')
-  const baseName = sanitizeFilenameSegment(`${meta.model}_${meta.prompt}`, 'generated')
+  const baseName = sanitizeSegment(`${meta.model}_${meta.prompt}`, 'generated', { limit: 70 })
+  const stamp = timestamp()
   const filePath = await getAvailablePath(
-    join(outputDir, `${imageGenerationTimestamp()}_${baseName}.${ext}`),
-    (counter) => join(outputDir, `${imageGenerationTimestamp()}_${baseName}_${counter}.${ext}`)
+    join(outputDir, `${stamp}_${baseName}.${ext}`),
+    (counter) => join(outputDir, `${stamp}_${baseName}_${counter}.${ext}`)
   )
   await writeFile(filePath, buffer)
   return {
@@ -886,7 +838,7 @@ async function requestGptImage(config, options, controller) {
       form.append('image[]', new Blob([ref.buffer], { type: ref.mimeType }), ref.name)
     }
 
-    const response = await fetch(resolveOpenAIImageEditEndpoint(config.endpoint), {
+    const response = await fetch(resolveOpenAIImageEndpoint(config.endpoint, 'edit'), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`
@@ -986,7 +938,7 @@ async function generateImage(event, options = {}) {
 
   const taskId = ++taskIdCounter
   const controller = new AbortController()
-  activeControllers.set(taskId, controller)
+  registerActiveTask(taskId, controller, event.sender)
   const count = normalizeImageCount(options.count)
   const results = []
 
@@ -1048,11 +1000,19 @@ async function generateImage(event, options = {}) {
 }
 
 let taskIdCounter = 0
-const activeControllers = new Map() // taskId -> AbortController
+const activeControllers = new Map()
+
+function registerActiveTask(taskId, controller, sender, backend = false) {
+  activeControllers.set(taskId, {
+    controller,
+    senderId: sender?.id ?? null,
+    backend
+  })
+}
 
 function abortActiveControllers() {
-  for (const [id, controller] of activeControllers) {
-    controller.abort()
+  for (const [id, task] of activeControllers) {
+    task.controller.abort()
     activeControllers.delete(id)
   }
 }
@@ -1065,10 +1025,34 @@ function destroyAllWindows() {
   }
 }
 
-async function cancelActiveTasks() {
-  const backendCancel = requestBackendControl('/cancel')
+async function cancelAllActiveTasks() {
+  const backendIds = [...activeControllers]
+    .filter(([, task]) => task.backend)
+    .map(([id]) => String(id))
+  const backendCancel = backendIds.length
+    ? await requestBackendControl('/cancel', BACKEND_CONTROL_TIMEOUT_MS, pythonPort, {
+        task_ids: backendIds
+      })
+    : true
   abortActiveControllers()
   return backendCancel
+}
+
+async function cancelLatestTask(senderId) {
+  const entry = [...activeControllers.entries()]
+    .reverse()
+    .find(([, task]) => task.senderId === senderId)
+  if (!entry) return false
+
+  const [taskId, task] = entry
+  if (task.backend) {
+    await requestBackendControl('/cancel', BACKEND_CONTROL_TIMEOUT_MS, pythonPort, {
+      task_id: String(taskId)
+    })
+  }
+  task.controller.abort()
+  activeControllers.delete(taskId)
+  return true
 }
 
 async function runForcedQuitShutdown(reason) {
@@ -1077,7 +1061,7 @@ async function runForcedQuitShutdown(reason) {
   if (!shutdownPromise) {
     shutdownPromise = (async () => {
       try {
-        await cancelActiveTasks()
+        await cancelAllActiveTasks()
         await stopTunnel()
         await stopPythonBackend({ graceful: true })
       } catch (err) {
@@ -1127,12 +1111,13 @@ function grabFetchErrorMessage(err, fallback) {
   return err.name === 'TimeoutError' ? '请求超时' : err.message || fallback
 }
 
-async function doFetch(endpoint, body, sender, controller) {
+async function doFetch(endpoint, body, sender, controller, taskId) {
   const resp = await fetch(`http://127.0.0.1:${pythonPort}${endpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-IMG-Editor-Token': pythonAuthToken
+      'X-IMG-Editor-Token': pythonAuthToken,
+      'X-IMG-Editor-Task-Id': String(taskId)
     },
     body: JSON.stringify(body),
     signal: controller.signal
@@ -1208,11 +1193,11 @@ async function callPython(endpoint, body, sender) {
   }
   const taskId = ++taskIdCounter
   const controller = new AbortController()
-  activeControllers.set(taskId, controller)
+  registerActiveTask(taskId, controller, sender, true)
   try {
     let result
     try {
-      result = await doFetch(endpoint, body, sender, controller)
+      result = await doFetch(endpoint, body, sender, controller, taskId)
     } catch (err) {
       // 连接被拒绝说明 Python 进程已崩溃，尝试重启一次
       if (err.name === 'AbortError') throw err
@@ -1222,7 +1207,7 @@ async function callPython(endpoint, body, sender) {
       console.warn('Python 后端连接失败，正在重启…', err.message)
       await stopPythonBackend()
       await startPythonBackend()
-      result = await doFetch(endpoint, body, sender, controller)
+      result = await doFetch(endpoint, body, sender, controller, taskId)
     }
     await grantResultLocalFileAccess(body, result)
     return result
@@ -1435,22 +1420,10 @@ function deriveGrabFilename(url, type = '') {
   try {
     const pathname = decodeURIComponent(new URL(url).pathname)
     const name = basename(pathname) || `image.${type || 'jpg'}`
-    return sanitizeGrabFilename(name)
+    return sanitizeSegment(name, 'image', { limit: 140, whitespace: ' ', trim: true })
   } catch {
     return `image.${type || 'jpg'}`
   }
-}
-
-function sanitizeGrabFilename(name) {
-  const cleaned = Array.from(String(name || ''), (char) => {
-    const code = char.charCodeAt(0)
-    return code < 32 || '<>:"/\\|?*'.includes(char) ? '_' : char
-  })
-    .join('')
-    .replace(/\s+/g, ' ')
-    .replace(/\.+$/g, '')
-    .trim()
-  return (cleaned || 'image').slice(0, 140)
 }
 
 function getContentTypeExt(contentType) {
@@ -1475,7 +1448,7 @@ function buildGrabHeaders(
 }
 
 function ensureImageExtension(filename, url, contentType) {
-  const clean = sanitizeGrabFilename(filename)
+  const clean = sanitizeSegment(filename, 'image', { limit: 140, whitespace: ' ', trim: true })
   const currentExt = extname(clean).toLowerCase()
   if (GRAB_EXT_TO_TYPE.has(currentExt)) return clean
 
@@ -1529,7 +1502,7 @@ async function scanImageSources(event, body = {}) {
 
   const taskId = ++taskIdCounter
   const controller = new AbortController()
-  activeControllers.set(taskId, controller)
+  registerActiveTask(taskId, controller, event.sender)
 
   try {
     for (let index = 0; index < sources.length; index += 1) {
@@ -1604,7 +1577,7 @@ async function downloadGrabImages(event, body = {}) {
 
   const taskId = ++taskIdCounter
   const controller = new AbortController()
-  activeControllers.set(taskId, controller)
+  registerActiveTask(taskId, controller, event.sender)
 
   try {
     await mkdir(outputDir, { recursive: true })
@@ -1780,27 +1753,8 @@ async function readImagesRecursiveFromDir(folderPath) {
   return results
 }
 
-function sanitizeWorkflowSegment(value) {
-  const reservedChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
-  return (
-    String(value || 'workflow')
-      .split('')
-      .map((char) => (reservedChars.has(char) || char.charCodeAt(0) < 32 ? '_' : char))
-      .join('')
-      .replace(/\s+/g, '_')
-      .replace(/\.+$/g, '')
-      .slice(0, 80) || 'workflow'
-  )
-}
-
 function getDefaultWorkflowRoot() {
   return join(app.getPath('userData'), 'workflow_runs')
-}
-
-function workflowTimestamp() {
-  const d = new Date()
-  const pad = (value) => String(value).padStart(2, '0')
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
 }
 
 async function uniqueDirectoryPath(parent, name) {
@@ -2005,8 +1959,21 @@ export function registerIPC() {
     try {
       const parent = String(baseDir || '').trim() || getDefaultWorkflowRoot()
       await mkdir(parent, { recursive: true })
-      const dirName = `${sanitizeWorkflowSegment(name)}_${workflowTimestamp()}`
+      const dirName = `${sanitizeSegment(name, 'workflow', { limit: 80 })}_${timestamp()}`
       const target = await uniqueDirectoryPath(parent, dirName)
+      await mkdir(target, { recursive: true })
+      await grantLocalFileAccess(target)
+      return target
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('resolve-workflow-path', async (_event, root, name) => {
+    try {
+      const parent = String(root || '').trim()
+      if (!parent) return { success: false, error: 'no workflow root' }
+      const target = join(parent, sanitizeSegment(name, 'output', { limit: 80 }))
       await mkdir(target, { recursive: true })
       await grantLocalFileAccess(target)
       return target
@@ -2128,13 +2095,9 @@ export function registerIPC() {
     }
   })
 
-  // 终止所有进行中的任务
-  ipcMain.handle('abort-task', async () => {
-    const cancelled = await cancelActiveTasks()
-    if (!cancelled && pythonPort) {
-      await stopPythonBackend({ graceful: true })
-    }
-    return { success: true }
+  ipcMain.handle('abort-task', async (event) => {
+    const cancelled = await cancelLatestTask(event.sender.id)
+    return { success: true, cancelled }
   })
 
   // ---- Tagger: 批量读取标签文件（分批并发，避免文件句柄溢出） ----
