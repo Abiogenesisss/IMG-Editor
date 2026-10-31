@@ -157,12 +157,8 @@ def local_unload_model():
     global _local_model, _local_processor, _local_model_id, _local_model_info
     import gc
 
-    if _local_model is not None:
-        del _local_model
-        _local_model = None
-    if _local_processor is not None:
-        del _local_processor
-        _local_processor = None
+    _local_model = None
+    _local_processor = None
     _local_model_id = None
     _local_model_info = {}
 
@@ -246,8 +242,8 @@ def local_caption_one(image_path, system_prompt, user_prompt,
                       image_size=1024, disable_think=False):
     """本地模型：单张推理"""
     try:
-        img = Image.open(image_path)
-        preprocessed = _image_preprocess(img, image_size)
+        with Image.open(image_path) as img:
+            preprocessed = _image_preprocess(img, image_size)
         captions = _generate_local_captions(
             [preprocessed], system_prompt, user_prompt,
             temperature, top_p, max_tokens, disable_think
@@ -270,26 +266,9 @@ def local_caption_batch(files, system_prompt, user_prompt,
         if cancel_event and cancel_event.is_set():
             break
 
-        try:
-            img = Image.open(fp)
-            preprocessed = _image_preprocess(img, image_size)
-        except Exception as e:
-            r = {"ok": False, "error": f"Load/Preprocess Error: {str(e)}"}
-            results[idx] = {"file": fp, **r}
-            done_count += 1
-            if progress_cb:
-                progress_cb(done_count, total, fp, r)
-            continue
-
-        try:
-            captions = _generate_local_captions(
-                [preprocessed], system_prompt, user_prompt,
-                temperature, top_p, max_tokens, disable_think
-            )
-            r = {"ok": True, "caption": captions[0]}
-        except Exception as e:
-            r = {"ok": False, "error": f"Inference Error: {str(e)}"}
-
+        r = local_caption_one(fp, system_prompt, user_prompt,
+                              temperature, top_p, max_tokens,
+                              image_size, disable_think)
         results[idx] = {"file": fp, **r}
         done_count += 1
         if progress_cb:
@@ -508,8 +487,6 @@ def caption_one(image_path, model, api_key, system_prompt, user_prompt,
         if disable_think and result.get("ok") and result.get("caption"):
             result["caption"] = _strip_think_tags(result["caption"])
         return result
-    except ImportError as e:
-        return {"ok": False, "error": str(e)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -525,15 +502,12 @@ def caption_batch_api(files, model, api_key, system_prompt, user_prompt,
     provider = _detect_provider(model)
     try:
         client = _get_client(provider, api_key, base_url)
-    except ImportError as e:
-        return [{"file": f, "ok": False, "error": str(e)} for f in files]
     except Exception as e:
         return [{"file": f, "ok": False, "error": str(e)} for f in files]
 
     fn = _DISPATCH[provider]
     results = [None] * len(files)
     done_count = 0
-    done_lock = threading.Lock()
     total = len(files)
 
     def do_one(idx, file_path):
@@ -565,11 +539,9 @@ def caption_batch_api(files, model, api_key, system_prompt, user_prompt,
                     if not remaining.done():
                         remaining.cancel()
                 break
-            with done_lock:
-                done_count += 1
-                current_done = done_count
+            done_count += 1
             if progress_cb:
-                progress_cb(current_done, total, files[idx], r)
+                progress_cb(done_count, total, files[idx], r)
 
     # 填充被取消的结果
     for i in range(len(results)):
@@ -611,7 +583,6 @@ def caption_batch_multi_api(files, api_configs, system_prompt, user_prompt,
 
     results = [None] * len(files)
     done_count = 0
-    done_lock = threading.Lock()
     total = len(files)
 
     def do_one(idx, file_path, client_info):
@@ -648,11 +619,9 @@ def caption_batch_multi_api(files, api_configs, system_prompt, user_prompt,
                     if not remaining.done():
                         remaining.cancel()
                 break
-            with done_lock:
-                done_count += 1
-                current_done = done_count
+            done_count += 1
             if progress_cb:
-                progress_cb(current_done, total, files[idx], r)
+                progress_cb(done_count, total, files[idx], r)
 
     for i in range(len(results)):
         if results[i] is None:

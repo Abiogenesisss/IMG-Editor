@@ -16,6 +16,9 @@ import { useLocalStorage } from '../composables/useLocalStorage'
 
 defineOptions({ name: 'TunnelTool' })
 
+const JUPYTER_PORT = '8888'
+const JUPYTER_COMMAND = 'jupyter lab --no-browser --ip 127.0.0.1 --port {remotePort}'
+
 function makeMapping(remotePort = '', localPort = remotePort) {
   return {
     id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
@@ -26,13 +29,18 @@ function makeMapping(remotePort = '', localPort = remotePort) {
 }
 
 const sshCommand = useLocalStorage('tunnel-ssh-command', '')
-const mappings = useLocalStorage('tunnel-port-mappings', [makeMapping('6006', '6006')], {
-  type: 'json'
-})
+const remoteCommand = useLocalStorage('tunnel-remote-command', JUPYTER_COMMAND)
+const mappings = useLocalStorage(
+  'tunnel-port-mappings',
+  [makeMapping(JUPYTER_PORT, JUPYTER_PORT)],
+  {
+    type: 'json'
+  }
+)
 const uploadRemoteDir = useLocalStorage('tunnel-upload-remote-dir', '/root')
 
 if (!Array.isArray(mappings.value) || mappings.value.length === 0) {
-  mappings.value = [makeMapping('6006', '6006')]
+  mappings.value = [makeMapping(JUPYTER_PORT, JUPYTER_PORT)]
 }
 
 const sshPassword = ref('')
@@ -56,6 +64,7 @@ const tunnelStatus = ref({
   logs: [],
   mappings: [],
   command: '',
+  remoteCommand: '',
   error: ''
 })
 
@@ -125,6 +134,11 @@ const uploadSourceSummary = computed(() => {
   return `已选 ${uploadSources.value.length} 项${files ? `，文件 ${files}` : ''}${folders ? `，文件夹 ${folders}` : ''}`
 })
 const logs = computed(() => tunnelStatus.value.logs || [])
+const activeCommandText = computed(() => {
+  const lines = [tunnelStatus.value.command || 'not started']
+  if (tunnelStatus.value.remoteCommand) lines.push(`remote: ${tunnelStatus.value.remoteCommand}`)
+  return lines.join('\n')
+})
 
 let removeTunnelListener = null
 
@@ -146,6 +160,7 @@ function validatePort(value, label) {
 function getStartPayload() {
   return {
     command: String(sshCommand.value || ''),
+    remoteCommand: String(remoteCommand.value || ''),
     password: String(sshPassword.value || ''),
     mappings: enabledMappings.value.map((row) => ({
       id: String(row.id || ''),
@@ -178,7 +193,7 @@ function removeMapping(id) {
 }
 
 function resetMappings() {
-  mappings.value = [makeMapping('6006', '6006')]
+  mappings.value = [makeMapping(JUPYTER_PORT, JUPYTER_PORT)]
 }
 
 function readConfigValue(key) {
@@ -205,13 +220,18 @@ function importConfig() {
   actionError.value = ''
   const cmd = readConfigValue('cmd')
   const password = readConfigValue('password')
+  const remoteCmd =
+    readConfigValue('remote_cmd') ||
+    readConfigValue('remote_command') ||
+    readConfigValue('remoteCommand')
   const ports = parsePorts()
-  if (!cmd && !password && ports.length === 0) {
-    actionError.value = '没有识别到 cmd、password 或 ports'
+  if (!cmd && !password && !remoteCmd && ports.length === 0) {
+    actionError.value = '没有识别到 cmd、password、remote_cmd 或 ports'
     return
   }
   if (cmd) sshCommand.value = cmd
   if (password) sshPassword.value = password
+  if (remoteCmd) remoteCommand.value = remoteCmd
   if (ports.length) mappings.value = ports
 }
 
@@ -338,7 +358,7 @@ onMounted(() => {
 })
 
 watch(
-  [sshCommand, mappings],
+  [sshCommand, remoteCommand, mappings],
   () => {
     actionError.value = ''
   },
@@ -412,12 +432,24 @@ onBeforeUnmount(() => {
         </label>
 
         <label class="form-field">
+          <span>远端启动命令</span>
+          <input
+            v-model="remoteCommand"
+            class="text-input"
+            type="text"
+            spellcheck="false"
+            :placeholder="JUPYTER_COMMAND"
+            :disabled="isActive"
+          />
+        </label>
+
+        <label class="form-field">
           <span>粘贴配置</span>
           <textarea
             v-model="configText"
             class="config-input"
             spellcheck="false"
-            placeholder='cmd = "ssh -p 45119 root@host"&#10;password = "..."&#10;ports = ["28000", "6006"]'
+            placeholder='cmd = "ssh -p 45119 root@host"&#10;password = "..."&#10;remote_cmd = "jupyter lab --no-browser --ip 127.0.0.1 --port {remotePort}"&#10;ports = ["8888"]'
             :disabled="isActive"
           ></textarea>
         </label>
@@ -626,7 +658,7 @@ onBeforeUnmount(() => {
 
         <div class="command-box">
           <div class="command-title">执行命令</div>
-          <code>{{ tunnelStatus.command || '未启动' }}</code>
+          <code>{{ activeCommandText }}</code>
         </div>
       </aside>
 

@@ -5,7 +5,6 @@ HTTP 服务 + 进程池调度，业务逻辑在 tasks/ 下
 
 import os
 import json
-import socket
 import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -67,12 +66,6 @@ def upscale_cleanup():
     return _upscale_api["cleanup_cache"]()
 
 
-def find_free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 def body_bool(value, default=False):
     if value is None:
         return default
@@ -105,8 +98,8 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _public_error(self, exc):
-        message = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
-        return message[:1000]
+        message = str(exc).strip()
+        return message.splitlines()[0][:1000] if message else exc.__class__.__name__
 
     def _log_exception(self, exc, context="request failed"):
         logging.exception("%s: %s", context, self.path)
@@ -122,10 +115,11 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length)) if length else {}
 
     def _json(self, data, status=200):
+        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        self.wfile.write(payload)
 
     def _begin_sse(self):
         """开启 SSE 流式响应"""
@@ -133,6 +127,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
+        self._sse_started = True
 
     def _send_event(self, event, data):
         """发送一条 SSE 事件"""
@@ -154,27 +149,22 @@ class Handler(BaseHTTPRequestHandler):
             os.makedirs(output_dir, exist_ok=True)
         self._begin_sse()
 
-        try:
-            args_list = args_builder(files, body)
-            results = run_parallel(
-                fn,
-                args_list,
-                progress_cb=lambda d, t: self._send_event(
-                    "progress", {"done": d, "total": t}
-                ),
-                cancel_event=self.cancel_event,
-            )
-            ok_count = sum(1 for r in results if r.get("ok"))
-            self._send_event("done", {
-                "success": True,
-                "processed": ok_count,
-                "failed": len(results) - ok_count,
-                "results": results,
-            })
-        except CancelledError:
-            self._send_event("done", {"success": False, "error": "task cancelled"})
-        except Exception as exc:
-            self._send_event("done", {"success": False, "error": self._log_exception(exc, "parallel task failed")})
+        args_list = args_builder(files, body)
+        results = run_parallel(
+            fn,
+            args_list,
+            progress_cb=lambda d, t: self._send_event(
+                "progress", {"done": d, "total": t}
+            ),
+            cancel_event=self.cancel_event,
+        )
+        ok_count = sum(1 for r in results if r.get("ok"))
+        self._send_event("done", {
+            "success": True,
+            "processed": ok_count,
+            "failed": len(results) - ok_count,
+            "results": results,
+        })
 
     # ---- 路由 ----
     def do_GET(self):
@@ -184,6 +174,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
+        self._sse_started = False
         if not self._authorized():
             return self._json({"success": False, "error": "forbidden"}, 403)
 
@@ -240,12 +231,19 @@ class Handler(BaseHTTPRequestHandler):
                     _cancel_events[self.task_id] = self.cancel_event
             try:
                 handler()
+            except (BrokenPipeError, ConnectionResetError):
+                if tracked:
+                    self.cancel_event.set()
             except Exception as exc:
-                error = self._log_exception(exc)
+                error = "task cancelled" if isinstance(exc, CancelledError) else self._log_exception(exc)
                 try:
-                    self._json({"success": False, "error": error}, 500)
-                except Exception:
-                    pass
+                    if self._sse_started:
+                        self._send_event("done", {"success": False, "error": error})
+                    else:
+                        self._json({"success": False, "error": error}, 500)
+                except (BrokenPipeError, ConnectionResetError):
+                    if tracked:
+                        self.cancel_event.set()
             finally:
                 if tracked:
                     with _cancel_events_lock:
@@ -271,26 +269,21 @@ class Handler(BaseHTTPRequestHandler):
         min_h, max_h = body.get("min_height", 0), body.get("max_height", 0)
 
         self._begin_sse()
-        try:
-            results = run_parallel(
-                filter_one,
-                [(f, min_w, max_w, min_h, max_h) for f in files],
-                progress_cb=lambda d, t: self._send_event(
-                    "progress", {"done": d, "total": t}
-                ),
-                cancel_event=self.cancel_event,
-            )
-            filtered_count = sum(1 for r in results if r.get("filtered"))
-            self._send_event("done", {
-                "success": True,
-                "filtered_count": filtered_count,
-                "total": len(results),
-                "results": results,
-            })
-        except CancelledError:
-            self._send_event("done", {"success": False, "error": "task cancelled"})
-        except Exception as exc:
-            self._send_event("done", {"success": False, "error": self._log_exception(exc, "resolution filter failed")})
+        results = run_parallel(
+            filter_one,
+            [(f, min_w, max_w, min_h, max_h) for f in files],
+            progress_cb=lambda d, t: self._send_event(
+                "progress", {"done": d, "total": t}
+            ),
+            cancel_event=self.cancel_event,
+        )
+        filtered_count = sum(1 for r in results if r.get("filtered"))
+        self._send_event("done", {
+            "success": True,
+            "filtered_count": filtered_count,
+            "total": len(results),
+            "results": results,
+        })
 
     # ---- 批量缩放 ----
     def _batch_resize(self):
@@ -310,28 +303,23 @@ class Handler(BaseHTTPRequestHandler):
         os.makedirs(output_dir, exist_ok=True)
         self._begin_sse()
 
-        try:
-            results = run_parallel(
-                resize_one,
-                [(f, output_dir, width, height, allow_upscale, face_threshold) for f in files],
-                progress_cb=lambda d, t: self._send_event(
-                    "progress", {"done": d, "total": t}
-                ),
-                cancel_event=self.cancel_event,
-            )
-            ok_count = sum(1 for r in results if r["ok"])
-            skipped = sum(1 for r in results if r.get("skipped"))
-            self._send_event("done", {
-                "success": True,
-                "processed": ok_count,
-                "skipped": skipped,
-                "failed": len(results) - ok_count,
-                "results": results,
-            })
-        except CancelledError:
-            self._send_event("done", {"success": False, "error": "task cancelled"})
-        except Exception as exc:
-            self._send_event("done", {"success": False, "error": self._log_exception(exc, "batch resize failed")})
+        results = run_parallel(
+            resize_one,
+            [(f, output_dir, width, height, allow_upscale, face_threshold) for f in files],
+            progress_cb=lambda d, t: self._send_event(
+                "progress", {"done": d, "total": t}
+            ),
+            cancel_event=self.cancel_event,
+        )
+        ok_count = sum(1 for r in results if r["ok"])
+        skipped = sum(1 for r in results if r.get("skipped"))
+        self._send_event("done", {
+            "success": True,
+            "processed": ok_count,
+            "skipped": skipped,
+            "failed": len(results) - ok_count,
+            "results": results,
+        })
 
     # ---- 格式转换 ----
     def _format_convert(self):
@@ -412,43 +400,38 @@ class Handler(BaseHTTPRequestHandler):
 
         self._begin_sse()
 
-        try:
-            progress_cb = lambda d, t: self._send_event("progress", {"done": d, "total": t})
+        progress_cb = lambda d, t: self._send_event("progress", {"done": d, "total": t})
 
-            if fusion_weights:
-                feature_results = extract_fusion_batch(
-                    files, progress_cb=progress_cb,
-                    weight_style=fusion_weights.get("style", 0.0),
-                    weight_semantic=fusion_weights.get("semantic", 0.0),
-                    weight_color=fusion_weights.get("color", 0.0),
-                    cancel_event=self.cancel_event,
-                )
-            elif method == "style":
-                feature_results = extract_style_batch(
-                    files, progress_cb=progress_cb, cancel_event=self.cancel_event
-                )
-            elif method == "semantic":
-                feature_results = extract_semantic_batch(
-                    files, progress_cb=progress_cb, cancel_event=self.cancel_event
-                )
-            else:
-                return self._send_event("done", {"success": False, "error": f"unknown method: {method}"})
+        if fusion_weights:
+            feature_results = extract_fusion_batch(
+                files, progress_cb=progress_cb,
+                weight_style=fusion_weights.get("style", 0.0),
+                weight_semantic=fusion_weights.get("semantic", 0.0),
+                weight_color=fusion_weights.get("color", 0.0),
+                cancel_event=self.cancel_event,
+            )
+        elif method == "style":
+            feature_results = extract_style_batch(
+                files, progress_cb=progress_cb, cancel_event=self.cancel_event
+            )
+        elif method == "semantic":
+            feature_results = extract_semantic_batch(
+                files, progress_cb=progress_cb, cancel_event=self.cancel_event
+            )
+        else:
+            return self._send_event("done", {"success": False, "error": f"unknown method: {method}"})
 
-            if self.cancel_event.is_set():
-                raise CancelledError("task cancelled")
-            results = cluster_features(feature_results, algorithm=algorithm, k=k)
-            group_count = len(set(r["group"] for r in results if r["group"] is not None))
+        if self.cancel_event.is_set():
+            raise CancelledError("task cancelled")
+        results = cluster_features(feature_results, algorithm=algorithm, k=k)
+        group_count = len(set(r["group"] for r in results if r["group"] is not None))
 
-            self._send_event("done", {
-                "success": True,
-                "total": len(files),
-                "group_count": group_count,
-                "results": results,
-            })
-        except CancelledError:
-            self._send_event("done", {"success": False, "error": "task cancelled"})
-        except Exception as exc:
-            self._send_event("done", {"success": False, "error": self._log_exception(exc, "cluster failed")})
+        self._send_event("done", {
+            "success": True,
+            "total": len(files),
+            "group_count": group_count,
+            "results": results,
+        })
 
     # ---- 聚类结果移动到子文件夹 ----
     def _cluster_move(self):
@@ -555,13 +538,10 @@ class Handler(BaseHTTPRequestHandler):
                 "total": total,
             })
 
-        try:
-            result = tagger_download(model_key, progress_cb=on_progress, auth_token=auth_token)
-            self._send_event("done", {"success": result.get("ok", False),
-                                       "error": result.get("error", ""),
-                                       "auth_required": result.get("auth_required", False)})
-        except Exception as e:
-            self._send_event("done", {"success": False, "error": str(e)})
+        result = tagger_download(model_key, progress_cb=on_progress, auth_token=auth_token)
+        self._send_event("done", {"success": result.get("ok", False),
+                                   "error": result.get("error", ""),
+                                   "auth_required": result.get("auth_required", False)})
 
     # ---- Tagger: 批量打标 ----
     def _tagger_tag(self):
@@ -584,29 +564,26 @@ class Handler(BaseHTTPRequestHandler):
 
         self._begin_sse()
 
-        try:
-            results = tag_batch(
-                files, model_key,
-                general_threshold=general_threshold,
-                character_threshold=character_threshold,
-                keep_copyright=keep_copyright,
-                keep_rating=keep_rating,
-                keep_meta=keep_meta,
-                keep_model=keep_model,
-                keep_quality=keep_quality,
-                replace_underscore=replace_underscore,
-                progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t}),
-                cancel_event=self.cancel_event,
-            )
-            ok_count = sum(1 for r in results if r.get("ok"))
-            self._send_event("done", {
-                "success": True,
-                "processed": ok_count,
-                "total": len(files),
-                "results": results,
-            })
-        except Exception as exc:
-            self._send_event("done", {"success": False, "error": self._log_exception(exc, "tagger failed")})
+        results = tag_batch(
+            files, model_key,
+            general_threshold=general_threshold,
+            character_threshold=character_threshold,
+            keep_copyright=keep_copyright,
+            keep_rating=keep_rating,
+            keep_meta=keep_meta,
+            keep_model=keep_model,
+            keep_quality=keep_quality,
+            replace_underscore=replace_underscore,
+            progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t}),
+            cancel_event=self.cancel_event,
+        )
+        ok_count = sum(1 for r in results if r.get("ok"))
+        self._send_event("done", {
+            "success": True,
+            "processed": ok_count,
+            "total": len(files),
+            "results": results,
+        })
 
     # ---- DeepGHS: model list ----
     def _deepghs_models(self):
@@ -632,12 +609,9 @@ class Handler(BaseHTTPRequestHandler):
                 "total": total,
             })
 
-        try:
-            result = deepghs_download(model_key, progress_cb=on_progress)
-            self._send_event("done", {"success": result.get("ok", False),
-                                       "error": result.get("error", "")})
-        except Exception as e:
-            self._send_event("done", {"success": False, "error": str(e)})
+        result = deepghs_download(model_key, progress_cb=on_progress)
+        self._send_event("done", {"success": result.get("ok", False),
+                                   "error": result.get("error", "")})
 
     # ---- DeepGHS: classify first, then aesthetic score ----
     def _deepghs_analyze(self):
@@ -661,35 +635,30 @@ class Handler(BaseHTTPRequestHandler):
 
         self._begin_sse()
 
-        try:
-            results = deepghs_analyze(
-                files,
-                classifier_model_key,
-                aesthetic_model_key,
-                allowed_classes=allowed_classes,
-                class_threshold=class_threshold,
-                min_score=min_score,
-                score_only_passed=score_only_passed,
-                letterbox_preprocess=letterbox_preprocess,
-                relaxed_class_match=relaxed_class_match,
-                cancel_event=self.cancel_event,
-                progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t})
-            )
-            ok_count = sum(1 for r in results if r.get("ok"))
-            scored_count = sum(1 for r in results if r.get("aesthetic_score") is not None)
-            low_count = sum(1 for r in results if r.get("low_score"))
-            self._send_event("done", {
-                "success": True,
-                "processed": ok_count,
-                "scored": scored_count,
-                "low_count": low_count,
-                "total": len(files),
-                "results": results,
-            })
-        except CancelledError:
-            self._send_event("done", {"success": False, "error": "task cancelled"})
-        except Exception as exc:
-            self._send_event("done", {"success": False, "error": self._log_exception(exc, "deepghs failed")})
+        results = deepghs_analyze(
+            files,
+            classifier_model_key,
+            aesthetic_model_key,
+            allowed_classes=allowed_classes,
+            class_threshold=class_threshold,
+            min_score=min_score,
+            score_only_passed=score_only_passed,
+            letterbox_preprocess=letterbox_preprocess,
+            relaxed_class_match=relaxed_class_match,
+            cancel_event=self.cancel_event,
+            progress_cb=lambda d, t: self._send_event("progress", {"done": d, "total": t})
+        )
+        ok_count = sum(1 for r in results if r.get("ok"))
+        scored_count = sum(1 for r in results if r.get("aesthetic_score") is not None)
+        low_count = sum(1 for r in results if r.get("low_score"))
+        self._send_event("done", {
+            "success": True,
+            "processed": ok_count,
+            "scored": scored_count,
+            "low_count": low_count,
+            "total": len(files),
+            "results": results,
+        })
 
     # ---- 超分辨率: 批量处理（GPU 顺序执行，不走进程池）----
     def _upscale(self):
@@ -1012,15 +981,12 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_body()
         self._begin_sse()
 
-        try:
-            result = run_grab_download(
-                body,
-                progress_cb=lambda data: self._send_event("progress", data),
-                cancel_event=self.cancel_event,
-            )
-            self._send_event("done", result)
-        except Exception as exc:
-            self._send_event("done", {"success": False, "error": self._log_exception(exc, "grab download failed")})
+        result = run_grab_download(
+            body,
+            progress_cb=lambda data: self._send_event("progress", data),
+            cancel_event=self.cancel_event,
+        )
+        self._send_event("done", result)
     # ---- 取消当前任务 ----
     def _cancel(self):
         body = self._read_body()
@@ -1088,9 +1054,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"success": True, "errors": errors})
 
 def main():
-    port = find_free_port()
-    server = ThreadedHTTPServer(("127.0.0.1", port), Handler)
-    print(f"PORT:{port}", flush=True)
+    server = ThreadedHTTPServer(("127.0.0.1", 0), Handler)
+    print(f"PORT:{server.server_port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

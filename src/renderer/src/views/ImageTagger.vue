@@ -1,15 +1,15 @@
 <script setup>
-import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
-import { useGridObserver } from '../composables/useGridObserver'
+import CommonUi from '../components/CommonUi.vue'
 import FolderRow from '../components/FolderRow.vue'
 import IconButton from '../components/IconButton.vue'
+import ImageGrid from '../components/ImageGrid.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
-import { ChevronDown, ChevronLeft, ChevronRight, Tags, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Tags, X } from 'lucide-vue-next'
 
 const downloading = ref(false)
 const downloadInfo = ref('')
-const modelDropOpen = ref(false)
 
 const {
   inputFolder,
@@ -34,7 +34,7 @@ const {
   refreshing,
   refreshImages,
   abortTask,
-  observeGrid
+  enqueueThumbnail
 } = useImageBrowser({
   onProgress({ step, total_steps, file: fileName, downloaded, total: fileTotal }) {
     if (downloading.value && step !== undefined) {
@@ -43,8 +43,6 @@ const {
     }
   }
 })
-
-const gridRef = useGridObserver(images, observeGrid)
 
 // ===================== 辅助函数 =====================
 function splitTags(str) {
@@ -55,6 +53,10 @@ function splitTags(str) {
 }
 function joinTags(arr) {
   return arr.join(', ')
+}
+
+function taggerCardClass(img) {
+  return { editing: editingImage.value?.path === img.path }
 }
 
 // ===================== 模型相关 =====================
@@ -120,17 +122,12 @@ function cancelHfTokenPrompt() {
 }
 
 const currentModelInfo = computed(() => models.value.find((m) => m.key === selectedModel.value))
-
-const selectedModelLabel = computed(() => {
-  const m = currentModelInfo.value
-  if (!m) return models.value.length === 0 ? '加载模型中...' : '选择模型'
-  return m.name + (m.downloaded ? '' : ' (未下载)')
-})
-
-function selectModel(key) {
-  selectedModel.value = key
-  modelDropOpen.value = false
-}
+const modelOptions = computed(() =>
+  models.value.map((m) => ({
+    value: m.key,
+    label: `${m.name}${m.downloaded ? '' : ' (未下载)'}`
+  }))
+)
 
 // ===================== 打标参数 =====================
 const generalThreshold = ref(0.35)
@@ -174,17 +171,8 @@ watch(
 )
 
 // ===================== 初始化 =====================
-function closeModelDrop() {
-  modelDropOpen.value = false
-}
-
 onMounted(() => {
   loadModels()
-  document.addEventListener('click', closeModelDrop)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', closeModelDrop)
 })
 
 // ===================== 批量打标 =====================
@@ -484,7 +472,6 @@ function clearTaggerFolder() {
   filterTags.value = new Set()
   tagSearch.value = ''
   tagError.value = ''
-  modelDropOpen.value = false
   editingImage.value = null
   editingTags.value = ''
   customTagInput.value = ''
@@ -524,32 +511,13 @@ const showTagPanel = ref(true)
       </div>
       <div class="action-section">
         <div class="model-select-wrap">
-          <div
-            class="custom-select"
-            :class="{ disabled: !!processingAction }"
-            @click.stop="!processingAction && (modelDropOpen = !modelDropOpen)"
-          >
-            <span class="custom-select-value">{{ selectedModelLabel }}</span>
-            <ChevronDown
-              class="custom-select-arrow"
-              :class="{ open: modelDropOpen }"
-              :size="12"
-              :stroke-width="2.5"
-              aria-hidden="true"
-            />
-            <Transition name="dropdown">
-              <div v-if="modelDropOpen" class="custom-select-list">
-                <div
-                  v-for="m in models"
-                  :key="m.key"
-                  :class="['custom-select-item', { active: selectedModel === m.key }]"
-                  @click.stop="selectModel(m.key)"
-                >
-                  {{ m.name }} {{ m.downloaded ? '' : '(未下载)' }}
-                </div>
-              </div>
-            </Transition>
-          </div>
+          <CommonUi
+            v-model="selectedModel"
+            class="model-select"
+            :options="modelOptions"
+            :disabled="!!processingAction || !modelOptions.length"
+            :placeholder="models.length === 0 ? '加载模型中...' : '选择模型'"
+          />
           <button
             v-if="currentModelInfo && !currentModelInfo.downloaded"
             class="action-btn download-btn"
@@ -869,35 +837,23 @@ const showTagPanel = ref(true)
       </div>
 
       <!-- ===== 中间：图片网格 ===== -->
-      <div ref="gridRef" class="image-grid tagger-grid">
-        <div
-          v-for="img in filteredImages"
-          :key="img.path"
-          :data-path="img.path"
-          :class="[
-            'image-card',
-            { selected: isSelected(img), editing: editingImage?.path === img.path }
-          ]"
-          @click="openEditor(img)"
-        >
-          <img
-            v-if="thumbnails[img.path]"
-            :src="thumbnails[img.path]"
-            :alt="img.name"
-            draggable="false"
-          />
-          <div v-else class="image-placeholder"></div>
-          <div class="image-name-overlay">{{ img.name }}</div>
+      <ImageGrid
+        :images="filteredImages"
+        :thumbnails="thumbnails"
+        :is-selected="isSelected"
+        :card-class="taggerCardClass"
+        grid-class="tagger-grid"
+        @load-thumbnail="enqueueThumbnail"
+        @open="openEditor"
+        @toggle-select="toggleSelect"
+      >
+        <template #default="{ img }">
           <span v-if="getTagPreview(img.path)" class="tag-badge">{{
             getTagPreview(img.path)
           }}</span>
           <span v-if="dirtySet.has(img.path)" class="dirty-dot" title="未保存"></span>
-          <span
-            :class="['checkbox', { checked: isSelected(img) }]"
-            @click.stop="toggleSelect(img)"
-          ></span>
-        </div>
-      </div>
+        </template>
+      </ImageGrid>
 
       <!-- ===== 右侧：单图标签编辑 ===== -->
       <Transition name="panel-slide">
@@ -1010,7 +966,7 @@ const showTagPanel = ref(true)
   border: none;
   background: none;
   color: var(--color-error);
-  font-size: 16px;
+  font-size: 14px;
   cursor: pointer;
   flex-shrink: 0;
   padding: 0 4px;
@@ -1079,9 +1035,9 @@ const showTagPanel = ref(true)
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 16px 20px;
+  gap: 12px 16px;
   padding: 6px 0 8px;
-  min-height: 36px;
+  min-height: 32px;
   box-sizing: border-box;
   flex-shrink: 0;
 }
@@ -1133,32 +1089,6 @@ const showTagPanel = ref(true)
 .threshold-toggle.cl-only.dim:hover .toggle-text {
   color: var(--color-text-secondary);
 }
-.toggle-switch {
-  position: relative;
-  width: 32px;
-  height: 18px;
-  border-radius: 9px;
-  background: var(--color-border-unchecked);
-  transition: background 0.2s;
-  flex-shrink: 0;
-}
-.toggle-switch.on {
-  background: var(--color-toggle-on);
-}
-.toggle-knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--color-toggle-knob);
-  box-shadow: 0 1px 3px var(--color-shadow);
-  transition: transform 0.2s;
-}
-.toggle-switch.on .toggle-knob {
-  transform: translateX(14px);
-}
 
 /* ===== 模型选择 ===== */
 .model-select-wrap {
@@ -1168,93 +1098,9 @@ const showTagPanel = ref(true)
   min-width: 0;
 }
 
-/* 自定义下拉框 */
-.custom-select {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  color: var(--color-text);
-  background: var(--color-input-bg);
-  cursor: pointer;
-  user-select: none;
-  transition: border-color 0.15s;
+.model-select {
   min-width: 180px;
-  box-sizing: border-box;
-  gap: 6px;
-}
-.custom-select:hover {
-  border-color: var(--color-border-hover);
-}
-.custom-select.disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-.custom-select-value {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.custom-select-arrow {
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-  transition: transform 0.2s;
-}
-.custom-select-arrow.open {
-  transform: rotate(180deg);
-}
-.custom-select-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  min-width: 100%;
-  width: max-content;
-  background: var(--color-input-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 4px 12px var(--color-shadow);
-  z-index: 20;
-  overflow: hidden;
-  max-height: 300px;
-  overflow-y: auto;
-}
-.custom-select-item {
-  padding: 6px 10px;
-  font-size: 12px;
-  color: var(--color-text);
-  cursor: pointer;
-  transition:
-    background 0.1s,
-    color 0.1s;
-  white-space: nowrap;
-}
-.custom-select-item:hover {
-  background: var(--color-surface-hover);
-}
-.custom-select-item.active {
-  background: var(--color-active-bg);
-  color: var(--color-active-text);
-}
-
-/* 下拉框动画 */
-.dropdown-enter-active,
-.dropdown-leave-active {
-  transition:
-    opacity 0.15s,
-    transform 0.15s;
-  transform-origin: top center;
-}
-.dropdown-enter-from,
-.dropdown-leave-to {
-  opacity: 0;
-  transform: scaleY(0.9);
+  width: 300px;
 }
 
 .download-btn {
@@ -1293,9 +1139,6 @@ const showTagPanel = ref(true)
   flex: 1;
   min-width: 0;
 }
-.image-card.editing {
-  border-color: var(--color-info);
-}
 
 /* ===== 标签摘要 ===== */
 .tag-badge {
@@ -1313,23 +1156,12 @@ const showTagPanel = ref(true)
   pointer-events: none;
   z-index: 1;
 }
-.dirty-dot {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-warning);
-  z-index: 2;
-  pointer-events: none;
-}
 
 /* ============================================
    左侧标签管理面板
    ============================================ */
 .tag-panel {
-  width: 360px;
+  width: 340px;
   flex-shrink: 0;
   border-right: 1px solid var(--color-border);
   display: flex;
@@ -1342,11 +1174,11 @@ const showTagPanel = ref(true)
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--color-border-light);
 }
 .tp-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--color-text);
 }
@@ -1413,7 +1245,7 @@ const showTagPanel = ref(true)
 .tp-chip.active {
   background: var(--color-active-bg);
   border-color: var(--color-active-bg);
-  color: var(--color-active-text);
+  color: var(--color-on-accent);
 }
 
 .tp-clear-btn {
@@ -1469,14 +1301,14 @@ const showTagPanel = ref(true)
   border-color: var(--color-tag-hover-border);
 }
 .tp-tag-chip.filtered {
-  background: var(--color-tag-filtered-bg);
-  border-color: var(--color-tag-hover-border);
-  color: var(--color-tag-filtered-color);
+  background: var(--color-info-light);
+  border-color: var(--color-accent-border);
+  color: var(--color-active-bg);
 }
 .tp-tag-chip.has-tag {
-  background: var(--color-tag-has-bg);
-  border-color: var(--color-tag-has-border);
-  color: var(--color-tag-has-color);
+  background: var(--color-info-light);
+  border-color: var(--color-accent-border);
+  color: var(--color-active-bg);
 }
 .tp-tag-chip.has-tag.filtered {
   background: var(--color-tag-filtered-bg);
@@ -1522,73 +1354,14 @@ const showTagPanel = ref(true)
    右侧编辑面板
    ============================================ */
 .tag-editor-panel {
-  width: 360px;
+  width: 340px;
   flex-shrink: 0;
   border-left: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   background: var(--color-input-bg);
   overflow: hidden;
-}
-
-.editor-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--color-surface-hover);
-  flex-shrink: 0;
-}
-.editor-filename {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-}
-.editor-nav {
-  display: flex;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.editor-nav-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  padding: 0;
-}
-.editor-nav-btn:hover {
-  color: var(--color-text);
-  background: var(--color-surface-hover);
-}
-.editor-nav-btn.close:hover {
-  color: var(--color-error);
-  background: var(--color-error-light);
-}
-
-.editor-preview {
-  flex-shrink: 0;
-  padding: 8px 12px;
-  display: flex;
-  justify-content: center;
-  background: var(--color-surface-soft);
-  max-height: 240px;
-}
-.editor-preview img {
-  max-width: 100%;
-  max-height: 220px;
-  object-fit: contain;
-  border-radius: var(--radius-sm);
+  transform-origin: right center;
 }
 
 /* 标签芯片区 */
@@ -1668,7 +1441,7 @@ const showTagPanel = ref(true)
   border: 1px solid var(--color-active-bg);
   border-radius: var(--radius-sm);
   background: var(--color-active-bg);
-  color: var(--color-active-text);
+  color: var(--color-on-accent);
   font-size: 12px;
   cursor: pointer;
   flex-shrink: 0;
@@ -1687,53 +1460,6 @@ const showTagPanel = ref(true)
   min-height: 0;
   padding: 8px 12px;
   overflow-y: auto;
-}
-.editor-textarea {
-  width: 100%;
-  min-height: 60px;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--color-text);
-  resize: vertical;
-  outline: none;
-  font-family: inherit;
-  box-sizing: border-box;
-}
-.editor-textarea:focus {
-  border-color: var(--color-text);
-}
-
-.editor-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--color-surface-hover);
-  flex-shrink: 0;
-}
-.editor-dirty-hint {
-  font-size: 12px;
-  color: var(--color-warning);
-}
-
-/* 面板滑入动画 */
-.tag-editor-panel {
-  transform-origin: right center;
-}
-.panel-slide-enter-active,
-.panel-slide-leave-active {
-  transition:
-    transform 0.2s ease,
-    opacity 0.2s ease;
-}
-.panel-slide-enter-from,
-.panel-slide-leave-to {
-  transform: translateX(100%);
-  opacity: 0;
 }
 
 /* ===== 标签面板底部批量编辑 ===== */
@@ -1790,7 +1516,7 @@ const showTagPanel = ref(true)
   border: 1px solid var(--color-active-bg);
   border-radius: var(--radius-sm);
   background: var(--color-active-bg);
-  color: var(--color-active-text);
+  color: var(--color-on-accent);
   font-size: 12px;
   cursor: pointer;
 }
@@ -1800,82 +1526,5 @@ const showTagPanel = ref(true)
 .tp-batch-run:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-/* 标签面板按钮高亮 */
-.bar-icon-btn.active {
-  color: var(--color-info);
-  background: var(--color-info-light);
-}
-
-.tag-error-close {
-  font-size: 14px;
-}
-
-.threshold-bar {
-  gap: 12px 16px;
-  min-height: 32px;
-}
-
-.toggle-switch {
-  width: 30px;
-  height: 16px;
-  border-radius: 999px;
-}
-
-.toggle-knob {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  box-shadow: none;
-}
-
-.custom-select {
-  height: 30px;
-  padding: 0 9px;
-  font-size: 12px;
-}
-
-.custom-select-list {
-  box-shadow: none;
-}
-
-.dirty-dot {
-  border-radius: 999px;
-}
-
-.tp-header,
-.editor-header {
-  padding: 8px 10px;
-}
-
-.tp-title,
-.editor-filename {
-  font-size: 12px;
-}
-
-.tag-panel,
-.tag-editor-panel {
-  width: 340px;
-}
-
-.custom-select-list {
-  box-shadow: var(--shadow-md);
-}
-
-.tp-chip.active,
-.custom-tag-add,
-.tp-batch-run {
-  background: var(--color-active-bg);
-  border-color: var(--color-active-bg);
-  color: var(--color-on-accent);
-}
-
-.tp-tag-chip.filtered,
-.tp-tag-chip.has-tag,
-.bar-icon-btn.active {
-  background: var(--color-info-light);
-  color: var(--color-active-bg);
-  border-color: var(--color-accent-border);
 }
 </style>

@@ -1,13 +1,4 @@
-import {
-  ref,
-  shallowReactive,
-  computed,
-  watch,
-  onUnmounted,
-  onDeactivated,
-  onActivated,
-  nextTick
-} from 'vue'
+import { ref, shallowReactive, computed, watch, onUnmounted, onDeactivated, onActivated } from 'vue'
 
 export function useImageBrowser(options = {}) {
   const { onProgress } = options
@@ -15,11 +6,11 @@ export function useImageBrowser(options = {}) {
   const outputFolder = ref('')
   const images = ref([])
   const selectedImages = ref(new Set())
-  const selectAll = ref(false)
   const thumbnails = shallowReactive({})
 
   const imageCount = computed(() => images.value.length)
   const selectedCount = computed(() => selectedImages.value.size)
+  const selectAll = computed(() => imageCount.value > 0 && selectedCount.value === imageCount.value)
 
   // --- 获取操作目标文件列表（有选中用选中，否则全部） ---
   function getTargetFiles() {
@@ -34,9 +25,6 @@ export function useImageBrowser(options = {}) {
   const loadQueue = []
   const loadQueueSet = new Set() // 用 Set 去重，避免 O(n) 的 includes 查找
   const thumbLoadOrder = [] // 记录加载顺序用于 LRU 淘汰
-  let intersectionObs = null
-  let mutationObs = null
-  let lastGridEl = null
 
   function evictOldThumbnails() {
     while (thumbLoadOrder.length > THUMB_CACHE_LIMIT) {
@@ -57,16 +45,14 @@ export function useImageBrowser(options = {}) {
     return thumbLoadGeneration
   }
 
-  function enqueueLoad(filePath) {
+  function enqueueThumbnail(filePath) {
     if (thumbnails[filePath]) return
     const generation = thumbLoadGeneration
     if (activeLoads < CONCURRENT_LIMIT) {
       loadThumbnail(filePath, generation)
-    } else {
-      if (!loadQueueSet.has(filePath)) {
-        loadQueue.push(filePath)
-        loadQueueSet.add(filePath)
-      }
+    } else if (!loadQueueSet.has(filePath)) {
+      loadQueue.push(filePath)
+      loadQueueSet.add(filePath)
     }
   }
 
@@ -83,7 +69,7 @@ export function useImageBrowser(options = {}) {
       }
     } finally {
       if (generation === thumbLoadGeneration) {
-        activeLoads = Math.max(0, activeLoads - 1)
+        activeLoads--
         while (loadQueue.length > 0 && activeLoads < CONCURRENT_LIMIT) {
           const next = loadQueue.shift()
           loadQueueSet.delete(next)
@@ -93,65 +79,16 @@ export function useImageBrowser(options = {}) {
     }
   }
 
-  function observeNewCards(containerEl) {
-    if (!containerEl || !intersectionObs) return
-    const cards = containerEl.querySelectorAll('.image-card[data-path]')
-    cards.forEach((card) => {
-      const path = card.dataset.path
-      if (path && !thumbnails[path]) {
-        intersectionObs.observe(card)
-      }
-    })
-  }
-
-  function observeGrid(containerEl) {
-    cleanupObservers()
-    if (!containerEl) return
-    lastGridEl = containerEl
-
-    intersectionObs = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const path = entry.target.dataset?.path
-            if (path) enqueueLoad(path)
-            intersectionObs?.unobserve(entry.target)
-          }
-        }
-      },
-      { root: containerEl, rootMargin: '300px 0px' }
-    )
-
-    // 自动观察新增的卡片（v-for 动态渲染）
-    mutationObs = new MutationObserver(() => observeNewCards(containerEl))
-    mutationObs.observe(containerEl, { childList: true, subtree: true })
-
-    nextTick(() => observeNewCards(containerEl))
-  }
-
-  function cleanupObservers() {
-    intersectionObs?.disconnect()
-    intersectionObs = null
-    mutationObs?.disconnect()
-    mutationObs = null
-  }
-
   // --- 文件夹选择 ---
   async function loadInputFolder(folder) {
+    closePreview()
     const generation = resetThumbnailLoadState(true)
     inputFolder.value = folder
     images.value = []
+    selectedImages.value = new Set()
     const list = await window.api.readImages(folder)
     if (generation !== thumbLoadGeneration) return
-
-    // 强制清理以触发DOM重绘与IntersectionObserver的重新计算，解决由于系统文件夹对话框导致主窗口失去焦点被Chromium节流导致的只显示加载骨架的问题
-    images.value = []
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    if (generation !== thumbLoadGeneration) return
-
     images.value = list
-    selectedImages.value = new Set()
-    selectAll.value = false
   }
 
   async function chooseInputFolder() {
@@ -175,16 +112,13 @@ export function useImageBrowser(options = {}) {
       s.add(img.path)
     }
     selectedImages.value = s
-    selectAll.value = s.size === images.value.length
   }
 
   function toggleSelectAll() {
     if (selectAll.value) {
       selectedImages.value = new Set()
-      selectAll.value = false
     } else {
       selectedImages.value = new Set(images.value.map((i) => i.path))
-      selectAll.value = true
     }
   }
 
@@ -203,16 +137,21 @@ export function useImageBrowser(options = {}) {
     previewImage.value = null
   }
 
+  function removeDeletedImages(paths) {
+    const deletedPaths = new Set(paths)
+    images.value = images.value.filter((img) => !deletedPaths.has(img.path))
+    selectedImages.value = new Set([...selectedImages.value].filter((p) => !deletedPaths.has(p)))
+    for (const path of deletedPaths) delete thumbnails[path]
+    if (deletedPaths.has(previewImage.value?.path)) closePreview()
+  }
+
   function clearCurrentFolder() {
     resetThumbnailLoadState(true)
-    cleanupObservers()
     inputFolder.value = ''
     images.value = []
     selectedImages.value = new Set()
-    selectAll.value = false
     previewImage.value = null
     refreshing.value = false
-    lastGridEl = null
   }
 
   // --- 删除图片（批量删除选中的图片） ---
@@ -229,13 +168,7 @@ export function useImageBrowser(options = {}) {
       if (r.success) deletedPaths.add(paths[i])
     })
     if (deletedPaths.size > 0) {
-      images.value = images.value.filter((i) => !deletedPaths.has(i.path))
-      const s = new Set([...selectedImages.value].filter((p) => !deletedPaths.has(p)))
-      selectedImages.value = s
-      selectAll.value = s.size === images.value.length && images.value.length > 0
-      for (const p of deletedPaths) {
-        delete thumbnails[p]
-      }
+      removeDeletedImages(deletedPaths)
     }
   }
 
@@ -278,20 +211,18 @@ export function useImageBrowser(options = {}) {
 
   // keep-alive 组件失活时释放资源
   onDeactivated(() => {
+    closePreview()
     resetThumbnailLoadState(false)
-    cleanupObservers()
     teardownProgressListener()
   })
 
   // keep-alive 组件重新激活时恢复资源
   onActivated(() => {
     setupProgressListener()
-    if (lastGridEl) observeGrid(lastGridEl)
   })
 
   onUnmounted(() => {
     resetThumbnailLoadState(false)
-    cleanupObservers()
     teardownProgressListener()
   })
 
@@ -320,9 +251,11 @@ export function useImageBrowser(options = {}) {
         if (!latestPaths.has(key)) delete thumbnails[key]
       }
       images.value = list
+      if (previewImage.value) {
+        previewImage.value = list.find((img) => img.path === previewImage.value.path) || null
+      }
       const s = new Set([...selectedImages.value].filter((p) => latestPaths.has(p)))
       selectedImages.value = s
-      selectAll.value = s.size === list.length && list.length > 0
       // 缩略图由 IntersectionObserver 按需触发
     } finally {
       refreshing.value = false
@@ -357,6 +290,7 @@ export function useImageBrowser(options = {}) {
     previewImage,
     openPreview,
     closePreview,
+    removeDeletedImages,
     deleteSelected,
     processingAction,
     progressDone,
@@ -365,6 +299,6 @@ export function useImageBrowser(options = {}) {
     refreshing,
     refreshImages,
     abortTask,
-    observeGrid
+    enqueueThumbnail
   }
 }

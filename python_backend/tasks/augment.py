@@ -1,19 +1,18 @@
 """数据增强：Cutout / 透视变换 / 高斯模糊+噪声 / 增强预览"""
 
-import os
 import io
 import base64
 import random
 import numpy as np
 from PIL import Image, ImageFilter
 
+from tasks.image_utils import save_image, suffixed_output_path
+
 
 def _save(img, fpath, output_dir, suffix):
     """保存增强后的图片"""
-    name, ext = os.path.splitext(os.path.basename(fpath))
-    out_name = f"{name}_{suffix}{ext}"
-    out_path = os.path.join(output_dir, out_name)
-    img.save(out_path, quality=95)
+    out_path = suffixed_output_path(fpath, output_dir, suffix)
+    save_image(img, out_path)
     return out_path
 
 

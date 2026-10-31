@@ -1,7 +1,7 @@
 # IMG Editor
 
-IMG Editor is a desktop tool for collecting, inspecting, processing, annotating,
-and generating image datasets. It combines an Electron + Vue interface with a
+IMG Editor is a desktop tool for collecting, inspecting, processing, and annotating
+image datasets. It combines an Electron + Vue interface with a
 local Python backend for heavier image-processing and model-backed tasks.
 
 ## Features
@@ -13,15 +13,20 @@ local Python backend for heavier image-processing and model-backed tasks.
 - Detect duplicates and group images by visual, semantic, or fused features.
 - Run local or model-backed upscaling workflows.
 - Tag images, filter by aesthetic score, and generate captions.
-- Generate images through configured image provider APIs.
 - Chain common steps in the workflow canvas.
 
 ## Architecture
 
 - `src/main/` contains the Electron main process, window lifecycle, IPC bridge,
   secure API config storage, update handling, and Python backend startup.
+  `ipc.js` registers application handlers; `taskRuntime.js` owns backend processes,
+  task cancellation, and shutdown; `imageGrab.js` handles web image collection.
+  `localFiles.js` provides local file access grants and shared output path rules.
 - `src/renderer/` contains the Vue application, route views, workflow UI, and
   reusable renderer components.
+  The workflow canvas keeps editing and run orchestration in its view, with node
+  definitions in `services/workflowCatalog.js` and node execution in
+  `services/workflowExecutor.js`.
 - `python_backend/server.py` exposes a local HTTP/SSE API that Electron starts
   on demand.
 - `python_backend/tasks/` contains first-party image processing, tagging,
@@ -79,6 +84,17 @@ npm run build:linux
 - `npm run setup:python` prepares the embedded Windows Python runtime.
 - `npm run lint` runs ESLint.
 - `npm run format` formats the project with Prettier.
+
+## Regression Checks
+
+```bash
+node --test tests/engineering-cleanup.test.cjs
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+These checks cover task cancellation, configuration persistence, workflow execution,
+image operations, and HTTP/SSE responses. Model and remote service calls use test
+doubles; image processing and process-pool checks use real local files and workers.
 
 ## Repository Notes
 

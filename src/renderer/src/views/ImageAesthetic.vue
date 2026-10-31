@@ -1,8 +1,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
-import { useGridObserver } from '../composables/useGridObserver'
+import CommonUi from '../components/CommonUi.vue'
 import FolderRow from '../components/FolderRow.vue'
+import ImageGrid from '../components/ImageGrid.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
 
 defineOptions({ name: 'ImageAesthetic' })
@@ -59,6 +60,7 @@ const {
   previewImage,
   openPreview,
   closePreview,
+  removeDeletedImages,
   deleteSelected,
   processingAction,
   progressDone,
@@ -66,7 +68,7 @@ const {
   refreshing,
   refreshImages,
   abortTask,
-  observeGrid
+  enqueueThumbnail
 } = useImageBrowser({
   onProgress({ step, total_steps, file: fileName, downloaded, total }) {
     if (!downloadingKey.value || step === undefined) return
@@ -75,10 +77,20 @@ const {
   }
 })
 
-const gridRef = useGridObserver(images, observeGrid)
-
 const classifierModels = computed(() => models.value.filter((model) => model.kind === 'classifier'))
 const aestheticModels = computed(() => models.value.filter((model) => model.kind === 'aesthetic'))
+const classifierOptions = computed(() =>
+  classifierModels.value.map((model) => ({
+    value: model.key,
+    label: `${model.name}${model.downloaded ? '' : ' (未下载)'}`
+  }))
+)
+const aestheticOptions = computed(() =>
+  aestheticModels.value.map((model) => ({
+    value: model.key,
+    label: `${model.name}${model.downloaded ? '' : ' (未下载)'}`
+  }))
+)
 const currentClassifier = computed(() =>
   models.value.find((model) => model.key === selectedClassifier.value)
 )
@@ -169,6 +181,17 @@ function formatPercent(value) {
 
 function getResult(img) {
   return resultMap.value.get(img.path)
+}
+
+function aestheticCardClass(img) {
+  const result = getResult(img)
+  return {
+    'aesthetic-card': true,
+    'low-score-card':
+      result?.ok && result?.aesthetic_score !== null && result?.aesthetic_score < minScore.value,
+    'class-rejected-card': result?.ok && result?.class_passed === false,
+    'error-card': result?.ok === false
+  }
 }
 
 function toggleAllowedClass(label) {
@@ -287,7 +310,6 @@ async function moveLowScoreToDel() {
       selectedImages.value = new Set(
         [...selectedImages.value].filter((path) => !movedPaths.has(path))
       )
-      selectAll.value = selectedImages.value.size === images.value.length && images.value.length > 0
       for (const path of movedPaths) {
         delete thumbnails[path]
       }
@@ -347,11 +369,13 @@ onMounted(() => {
       </div>
 
       <div class="action-section aesthetic-actions">
-        <select v-model="selectedClassifier" class="model-select" :disabled="!!processingAction">
-          <option v-for="model in classifierModels" :key="model.key" :value="model.key">
-            {{ model.name }}{{ model.downloaded ? '' : ' (未下载)' }}
-          </option>
-        </select>
+        <CommonUi
+          v-model="selectedClassifier"
+          class="model-select"
+          :options="classifierOptions"
+          :disabled="!!processingAction || !classifierOptions.length"
+          placeholder="选择分类模型"
+        />
         <button
           v-if="currentClassifier && !currentClassifier.downloaded"
           class="action-btn download-model-btn"
@@ -361,11 +385,13 @@ onMounted(() => {
           {{ downloadingKey === selectedClassifier ? '下载中' : '下载分类' }}
         </button>
 
-        <select v-model="selectedAesthetic" class="model-select" :disabled="!!processingAction">
-          <option v-for="model in aestheticModels" :key="model.key" :value="model.key">
-            {{ model.name }}{{ model.downloaded ? '' : ' (未下载)' }}
-          </option>
-        </select>
+        <CommonUi
+          v-model="selectedAesthetic"
+          class="model-select"
+          :options="aestheticOptions"
+          :disabled="!!processingAction || !aestheticOptions.length"
+          placeholder="选择评分模型"
+        />
         <button
           v-if="currentAesthetic && !currentAesthetic.downloaded"
           class="action-btn download-model-btn"
@@ -489,34 +515,21 @@ onMounted(() => {
       </template>
     </ImageStatusBar>
 
-    <div v-if="imageCount > 0" ref="gridRef" class="image-grid aesthetic-grid">
-      <div
-        v-for="img in sortedImages"
-        :key="img.path"
-        :data-path="img.path"
-        :class="[
-          'image-card',
-          'aesthetic-card',
-          {
-            selected: isSelected(img),
-            'low-score-card':
-              getResult(img)?.ok &&
-              getResult(img)?.aesthetic_score !== null &&
-              getResult(img)?.aesthetic_score < minScore,
-            'class-rejected-card': getResult(img)?.ok && getResult(img)?.class_passed === false,
-            'error-card': getResult(img)?.ok === false
-          }
-        ]"
-        @click="openPreview(img)"
-      >
-        <img
-          v-if="thumbnails[img.path]"
-          :src="thumbnails[img.path]"
-          :alt="img.name"
-          draggable="false"
-        />
-        <div v-else class="image-placeholder"></div>
-
+    <ImageGrid
+      :images="sortedImages"
+      :thumbnails="thumbnails"
+      :is-selected="isSelected"
+      :card-class="aestheticCardClass"
+      :preview-image="previewImage"
+      :delete-disabled="!!processingAction"
+      grid-class="aesthetic-grid"
+      @load-thumbnail="enqueueThumbnail"
+      @open="openPreview"
+      @toggle-select="toggleSelect"
+      @close-preview="closePreview"
+      @deleted="removeDeletedImages"
+    >
+      <template #default="{ img }">
         <template v-if="getResult(img)">
           <span
             v-if="getResult(img)?.ok && getResult(img)?.aesthetic_score !== null"
@@ -544,27 +557,8 @@ onMounted(() => {
             {{ displayAesthetic(getResult(img).aesthetic_label) }}
           </span>
         </template>
-
-        <div class="image-name-overlay">{{ img.name }}</div>
-        <span
-          :class="['checkbox', { checked: isSelected(img) }]"
-          @click.stop="toggleSelect(img)"
-        ></span>
-      </div>
-    </div>
-
-    <div v-else class="empty-state">
-      <span class="empty-text">选择输入文件夹以加载图片</span>
-    </div>
-
-    <Teleport to="body">
-      <Transition name="preview-fade">
-        <div v-if="previewImage" class="preview-overlay" @click="closePreview">
-          <img :src="previewImage.url" :alt="previewImage.name" class="preview-img" />
-          <div class="preview-filename">{{ previewImage.name }}</div>
-        </div>
-      </Transition>
-    </Teleport>
+      </template>
+    </ImageGrid>
   </div>
 </template>
 
@@ -581,22 +575,9 @@ onMounted(() => {
 }
 
 .model-select {
-  height: 34px;
   width: 260px;
   min-width: 0;
   flex: 0 0 260px;
-  padding: 0 9px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-input-bg);
-  color: var(--color-text);
-  font-size: 12px;
-  outline: none;
-}
-
-.model-select:focus {
-  border-color: var(--color-accent-border);
-  box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
 
 .download-model-btn,

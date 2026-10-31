@@ -3,6 +3,8 @@
 import os
 from PIL import Image
 
+from tasks.image_utils import save_image
+
 
 def convert_one(file_path, output_dir, target_format):
     """将单张图片转换为指定格式（png / jpg / webp）"""
@@ -25,11 +27,7 @@ def convert_one(file_path, output_dir, target_format):
             out_name = f"{name}{new_ext}"
             out_path = os.path.join(output_dir, out_name)
 
-            save_kwargs = {}
-            if target_format in ("jpg", "webp"):
-                save_kwargs["quality"] = 95
-
-            img.save(out_path, **save_kwargs)
+            save_image(img, out_path)
 
         return {"file": file_path, "output": out_path, "ok": True}
     except Exception as e:

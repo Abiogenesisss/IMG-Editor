@@ -1,8 +1,8 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
-import { useGridObserver } from '../composables/useGridObserver'
 import FolderRow from '../components/FolderRow.vue'
+import ImageGrid from '../components/ImageGrid.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
 
 const {
@@ -25,6 +25,7 @@ const {
   previewImage,
   openPreview,
   closePreview,
+  removeDeletedImages,
   deleteSelected,
   processingAction,
   progressDone,
@@ -33,10 +34,8 @@ const {
   refreshing,
   refreshImages,
   abortTask,
-  observeGrid
+  enqueueThumbnail
 } = useImageBrowser()
-
-const gridRef = useGridObserver(images, observeGrid)
 
 // --- 面板控制 ---
 const activePanel = ref(null)
@@ -248,6 +247,15 @@ function getGroupColor(groupId) {
   return GROUP_COLORS[groupId % GROUP_COLORS.length]
 }
 
+function processCardClass(img) {
+  return { 'dedup-remove-card': getDedupQualityInfo(img)?.action === 'remove' }
+}
+
+function processCardStyle(img) {
+  const info = getGroupInfo(img)
+  return info ? { borderColor: getGroupColor(info.group) } : {}
+}
+
 // --- 聚类 ---
 const clusterMethod = ref('style')
 const clusterAlgorithm = ref('kmeans')
@@ -422,7 +430,6 @@ async function removeLowQualityDuplicates() {
       selectedImages.value = new Set(
         [...selectedImages.value].filter((path) => !removedPaths.has(path))
       )
-      selectAll.value = selectedImages.value.size === images.value.length && images.value.length > 0
       for (const path of removedPaths) {
         delete thumbnails[path]
       }
@@ -880,29 +887,21 @@ function clearProcessFolder() {
     </ImageStatusBar>
 
     <!-- 图片网格 -->
-    <div v-if="imageCount > 0" ref="gridRef" class="image-grid">
-      <div
-        v-for="img in sortedImages"
-        :key="img.path"
-        :data-path="img.path"
-        :class="[
-          'image-card',
-          {
-            selected: isSelected(img),
-            'dedup-remove-card': getDedupQualityInfo(img)?.action === 'remove'
-          }
-        ]"
-        :style="getGroupInfo(img) ? { borderColor: getGroupColor(getGroupInfo(img).group) } : {}"
-        @click="openPreview(img)"
-      >
-        <img
-          v-if="thumbnails[img.path]"
-          :src="thumbnails[img.path]"
-          :alt="img.name"
-          draggable="false"
-        />
-        <div v-else class="image-placeholder"></div>
-        <div class="image-name-overlay">{{ img.name }}</div>
+    <ImageGrid
+      :images="sortedImages"
+      :thumbnails="thumbnails"
+      :is-selected="isSelected"
+      :card-class="processCardClass"
+      :card-style="processCardStyle"
+      :preview-image="previewImage"
+      :delete-disabled="!!processingAction"
+      @load-thumbnail="enqueueThumbnail"
+      @open="openPreview"
+      @toggle-select="toggleSelect"
+      @close-preview="closePreview"
+      @deleted="removeDeletedImages"
+    >
+      <template #default="{ img }">
         <span
           v-if="getDedupQualityInfo(img)"
           :class="['quality-badge', `quality-badge--${getDedupQualityInfo(img).action}`]"
@@ -918,27 +917,10 @@ function clearProcessFolder() {
         >
           {{ getGroupInfo(img).label }}
         </span>
-        <span
-          :class="['checkbox', { checked: isSelected(img) }]"
-          @click.stop="toggleSelect(img)"
-        ></span>
-      </div>
-    </div>
-
-    <!-- 空状态 -->
-    <div v-else class="empty-state">
-      <span class="empty-text">选择输入文件夹以加载图片</span>
-    </div>
+      </template>
+    </ImageGrid>
 
     <!-- 原图预览遮罩 -->
-    <Teleport to="body">
-      <Transition name="preview-fade">
-        <div v-if="previewImage" class="preview-overlay" @click="closePreview">
-          <img :src="previewImage.url" :alt="previewImage.name" class="preview-img" />
-          <div class="preview-filename">{{ previewImage.name }}</div>
-        </div>
-      </Transition>
-    </Teleport>
   </div>
 </template>
 

@@ -20,12 +20,6 @@ import {
 import { loadApiConfigs, saveApiConfigs } from '../services/apiConfigs'
 import { settingsMenuItems } from '../services/navigation'
 import { readStoredJson } from '../composables/useLocalStorage'
-import {
-  resolveGeminiInteractionsEndpoint,
-  resolveImageProvider,
-  resolveOpenAIImageEndpoint,
-  trimTrailingSlash
-} from '../../../shared/imageProviders'
 
 defineOptions({ name: 'Settings' })
 
@@ -146,11 +140,13 @@ onBeforeUnmount(() => {
 })
 
 async function toggleAutoCheck() {
-  autoCheckUpdate.value = !autoCheckUpdate.value
+  const enabled = !autoCheckUpdate.value
   try {
-    await window.api.setAutoCheckUpdate(autoCheckUpdate.value)
-  } catch {
-    /* ignore */
+    await window.api.setAutoCheckUpdate(enabled)
+    autoCheckUpdate.value = enabled
+  } catch (err) {
+    updateStatus.value = 'error'
+    updateInfo.value = { message: `保存自动更新设置失败：${err.message}` }
   }
 }
 
@@ -181,7 +177,7 @@ const updateStatusText = computed(() => {
     case 'downloaded':
       return '下载完成，点击安装并重启'
     case 'error':
-      return `检查更新失败: ${updateInfo.value?.message || '未知错误'}`
+      return `更新操作失败: ${updateInfo.value?.message || '未知错误'}`
     default:
       return ''
   }
@@ -189,14 +185,30 @@ const updateStatusText = computed(() => {
 
 // ===================== API 配置管理 =====================
 async function saveConfigs(list) {
-  apiConfigs.value = await saveApiConfigs(list)
+  try {
+    apiConfigs.value = await saveApiConfigs(list)
+    apiConfigError.value = ''
+    return true
+  } catch (err) {
+    apiConfigError.value = `保存 API 配置失败：${err.message}`
+    return false
+  }
 }
 
 async function refreshConfigs() {
-  apiConfigs.value = await loadApiConfigs()
+  apiConfigsLoaded.value = false
+  try {
+    apiConfigs.value = await loadApiConfigs()
+    apiConfigsLoaded.value = true
+    apiConfigError.value = ''
+  } catch (err) {
+    apiConfigError.value = `读取 API 配置失败：${err.message}`
+  }
 }
 
 const apiConfigs = ref([])
+const apiConfigsLoaded = ref(false)
+const apiConfigError = ref('')
 
 onMounted(() => {
   refreshConfigs()
@@ -275,11 +287,6 @@ const filteredModelOptions = computed(() => {
   )
 })
 
-const selectedModelText = computed(() => {
-  const model = modelSelectOptions.value.find((item) => item.id === formModel.value)
-  return model?.name || formModel.value || '选择模型'
-})
-
 function formAnchorId(id) {
   return `api-config-form-anchor-${String(id).replace(/[^A-Za-z0-9_-]/g, '-')}`
 }
@@ -337,43 +344,36 @@ watch([formEndpoint, formApiKey], scheduleModelFetch)
 
 async function submitForm() {
   if (!formName.value.trim() || !formModel.value.trim()) return
-
-  if (editingId.value) {
-    // 编辑
-    const idx = apiConfigs.value.findIndex((c) => c.id === editingId.value)
-    if (idx !== -1) {
-      apiConfigs.value[idx] = {
-        ...apiConfigs.value[idx],
-        name: formName.value.trim(),
-        model: formModel.value.trim(),
-        endpoint: formEndpoint.value.trim(),
-        apiKey: formApiKey.value.trim()
-      }
-    }
-  } else {
-    // 新增
-    apiConfigs.value.push({
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      name: formName.value.trim(),
-      model: formModel.value.trim(),
-      endpoint: formEndpoint.value.trim(),
-      apiKey: formApiKey.value.trim(),
-      enabled: true
-    })
+  const fields = {
+    name: formName.value.trim(),
+    model: formModel.value.trim(),
+    endpoint: formEndpoint.value.trim(),
+    apiKey: formApiKey.value.trim()
   }
-  await saveConfigs(apiConfigs.value)
-  closeForm()
+  const next = editingId.value
+    ? apiConfigs.value.map((cfg) => (cfg.id === editingId.value ? { ...cfg, ...fields } : cfg))
+    : [
+        ...apiConfigs.value,
+        {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          ...fields,
+          enabled: true
+        }
+      ]
+  if (await saveConfigs(next)) closeForm()
 }
 
 async function deleteConfig(id) {
-  if (editingId.value === id) closeForm()
-  apiConfigs.value = apiConfigs.value.filter((c) => c.id !== id)
-  await saveConfigs(apiConfigs.value)
+  const saved = await saveConfigs(apiConfigs.value.filter((c) => c.id !== id))
+  if (saved && editingId.value === id) closeForm()
 }
 
 async function toggleEnabled(cfg) {
-  cfg.enabled = !cfg.enabled
-  await saveConfigs(apiConfigs.value)
+  await saveConfigs(
+    apiConfigs.value.map((item) =>
+      item.id === cfg.id ? { ...item, enabled: !item.enabled } : item
+    )
+  )
 }
 
 // 根据模型名和 endpoint 预览实际请求地址
@@ -381,22 +381,15 @@ const previewUrl = computed(() => {
   const endpoint = formEndpoint.value.trim()
   const model = formModel.value.trim().toLowerCase()
   if (!endpoint) return ''
-  const provider = resolveImageProvider({
-    name: formName.value,
-    model,
-    endpoint
-  })
-  if (provider === 'gpt') return resolveOpenAIImageEndpoint(endpoint)
-  if (provider === 'nanobanana') return resolveGeminiInteractionsEndpoint(endpoint)
   if (model.includes('gemini')) {
     return endpoint
   }
   if (model.includes('claude')) {
-    const base = trimTrailingSlash(endpoint)
+    const base = endpoint.replace(/\/+$/, '')
     return base + '/v1/messages'
   }
   // OpenAI 兼容
-  const base = trimTrailingSlash(endpoint)
+  const base = endpoint.replace(/\/+$/, '')
   return base + '/chat/completions'
 })
 </script>
@@ -548,11 +541,16 @@ const previewUrl = computed(() => {
           <h2>
             API 配置 <span class="config-count">({{ apiConfigs.length }})</span>
           </h2>
-          <button class="add-config-btn" @click="openAddForm">
+          <button class="add-config-btn" :disabled="!apiConfigsLoaded" @click="openAddForm">
             <Plus :size="14" :stroke-width="2.5" aria-hidden="true" />
             添加配置
           </button>
         </div>
+
+        <p v-if="apiConfigError" class="model-fetch-hint error" role="alert">
+          {{ apiConfigError }}
+          <button class="add-config-btn" @click="refreshConfigs">重新读取</button>
+        </p>
 
         <!-- 添加/编辑表单 -->
         <div id="api-config-form-anchor-top" class="config-form-anchor"></div>
@@ -572,13 +570,21 @@ const previewUrl = computed(() => {
                 </div>
                 <div class="form-field">
                   <label class="form-label">MODEL NAME</label>
-                  <div v-if="modelSelectOptions.length" class="model-combobox">
+                  <div v-if="modelSelectOptions.length" class="model-combobox" @click.stop>
+                    <input
+                      v-model="formModel"
+                      class="form-input model-combobox-input"
+                      type="text"
+                      placeholder="deepseek-reasoner"
+                      @focus="modelDropOpen = true"
+                      @input="modelFilter = ''"
+                    />
                     <button
-                      class="model-combobox-trigger"
+                      class="model-combobox-toggle"
                       type="button"
-                      @click.stop="modelDropOpen = !modelDropOpen"
+                      aria-label="切换模型列表"
+                      @click="modelDropOpen = !modelDropOpen"
                     >
-                      <span>{{ selectedModelText }}</span>
                       <ChevronDown
                         :class="['model-combobox-arrow', { open: modelDropOpen }]"
                         :size="14"
@@ -659,7 +665,7 @@ const previewUrl = computed(() => {
                 </div>
               </div>
               <div class="form-actions">
-                <button class="submit-btn" @click="submitForm">
+                <button class="submit-btn" :disabled="!apiConfigsLoaded" @click="submitForm">
                   <Copy :size="14" :stroke-width="2" aria-hidden="true" />
                   {{ editingId ? '保存修改' : '添加配置' }}
                 </button>
@@ -669,10 +675,10 @@ const previewUrl = computed(() => {
         </Teleport>
 
         <!-- 配置列表 -->
-        <div v-if="apiConfigs.length === 0 && !showForm" class="empty-configs">
+        <div v-if="apiConfigsLoaded && apiConfigs.length === 0 && !showForm" class="empty-configs">
           <span>暂无 API 配置，点击上方按钮添加</span>
         </div>
-        <TransitionGroup name="list-fade" tag="div" class="config-list">
+        <TransitionGroup :inert="!apiConfigsLoaded" name="list-fade" tag="div" class="config-list">
           <div v-for="cfg in apiConfigs" :key="cfg.id" class="config-entry">
             <div :class="['config-item', { disabled: !cfg.enabled }]">
               <span :class="['config-toggle', { on: cfg.enabled }]" @click="toggleEnabled(cfg)">
@@ -1011,36 +1017,22 @@ const previewUrl = computed(() => {
 .model-combobox {
   position: relative;
 }
-.model-combobox-trigger {
-  width: 100%;
+.model-combobox-input {
+  padding-right: 30px;
+}
+.model-combobox-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30px;
   height: 30px;
-  padding: 0 9px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-input-bg);
-  color: var(--color-text);
-  font-size: 12px;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
   cursor: pointer;
-  transition:
-    border-color 0.15s,
-    background 0.15s,
-    box-shadow 0.15s;
-}
-.model-combobox-trigger span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.model-combobox-trigger:hover,
-.model-combobox-trigger:focus-visible {
-  border-color: var(--color-border-hover);
-  box-shadow: 0 0 0 2px var(--color-accent-light);
-  outline: none;
 }
 .model-combobox-arrow {
   flex-shrink: 0;

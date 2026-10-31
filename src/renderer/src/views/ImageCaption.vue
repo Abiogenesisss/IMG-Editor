@@ -1,8 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onActivated, onBeforeUnmount } from 'vue'
-import { useRoute } from 'vue-router'
 import { useImageBrowser } from '../composables/useImageBrowser'
-import { useGridObserver } from '../composables/useGridObserver'
 import { readStoredJson, useLocalStorage } from '../composables/useLocalStorage'
 import {
   API_CONFIGS_UPDATED_EVENT,
@@ -12,6 +10,7 @@ import {
 } from '../services/apiConfigs'
 import FolderRow from '../components/FolderRow.vue'
 import IconButton from '../components/IconButton.vue'
+import ImageGrid from '../components/ImageGrid.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
 import {
   Check,
@@ -41,6 +40,10 @@ function applyCaptionResult(filePath, caption) {
   }
 }
 
+function captionCardClass(img) {
+  return { editing: editingImage.value?.path === img.path }
+}
+
 const {
   inputFolder,
   outputFolder,
@@ -64,7 +67,7 @@ const {
   refreshing,
   refreshImages,
   abortTask,
-  observeGrid
+  enqueueThumbnail
 } = useImageBrowser({
   onProgress(data) {
     if (data.ok && data.file && data.caption) {
@@ -73,16 +76,22 @@ const {
   }
 })
 
-const gridRef = useGridObserver(images, observeGrid)
-
 // ===================== 全局 API 配置 =====================
 const apiConfigs = ref([])
+const apiConfigError = ref('')
 const enabledConfigs = computed(() => apiConfigs.value.filter((c) => c.enabled))
 const hasEnabledConfig = computed(() => enabledConfigs.value.length > 0)
 const firstEnabled = computed(() => enabledConfigs.value[0] || null)
 
 async function refreshApiConfigs() {
-  apiConfigs.value = await loadApiConfigs()
+  try {
+    apiConfigs.value = await loadApiConfigs()
+    apiConfigError.value = ''
+    return true
+  } catch (err) {
+    apiConfigError.value = `读取 API 配置失败：${err.message}`
+    return false
+  }
 }
 
 // ===================== API 选择 =====================
@@ -127,7 +136,11 @@ async function toggleApiEnabled(cfg) {
   const next = apiConfigs.value.map((item) =>
     item.id === cfg.id ? { ...item, enabled: !item.enabled } : item
   )
-  apiConfigs.value = await saveApiConfigs(next)
+  try {
+    apiConfigs.value = await saveApiConfigs(next)
+  } catch (err) {
+    captionError.value = `保存 API 配置失败：${err.message}`
+  }
 }
 
 // ===================== 持久化配置 =====================
@@ -144,11 +157,16 @@ const topP = useLocalStorage('caption-topp', 0, { type: 'float' })
 const maxTokens = useLocalStorage('caption-maxtokens', 1024)
 const skipExisting = ref(true)
 const disableThink = useLocalStorage('caption-disable-think', false)
-const systemPrompt = useLocalStorage(
-  'caption-system-prompt',
+const LEGACY_SYSTEM_PROMPT =
   'You are a professional image captioning assistant. Provide a detailed, natural language description of the image suitable for training image generation models.'
-)
-const userPrompt = useLocalStorage('caption-user-prompt', 'Please describe this image in detail.')
+const DEFAULT_SYSTEM_PROMPT =
+  '你是一名专业的图片描述助手。请用自然、准确、细致的中文描述图片内容，适合用于图像生成模型训练。'
+const LEGACY_USER_PROMPT = 'Please describe this image in detail.'
+const DEFAULT_USER_PROMPT = '请详细描述这张图片。'
+const systemPrompt = useLocalStorage('caption-system-prompt', DEFAULT_SYSTEM_PROMPT)
+const userPrompt = useLocalStorage('caption-user-prompt', DEFAULT_USER_PROMPT)
+if (systemPrompt.value === LEGACY_SYSTEM_PROMPT) systemPrompt.value = DEFAULT_SYSTEM_PROMPT
+if (userPrompt.value === LEGACY_USER_PROMPT) userPrompt.value = DEFAULT_USER_PROMPT
 
 // ===================== 本地模型状态 =====================
 const localModelLoaded = ref(false)
@@ -195,7 +213,6 @@ async function browseLocalModel() {
 }
 
 // ===================== 初始化 =====================
-const route = useRoute()
 
 watch(
   () => images.value,
@@ -211,7 +228,6 @@ watch(
 
 onMounted(async () => {
   window.addEventListener(API_CONFIGS_UPDATED_EVENT, refreshApiConfigs)
-  await refreshApiConfigs()
   try {
     const st = await window.api.callPython('/local-model-status', {})
     if (st.success && st.loaded) {
@@ -227,12 +243,6 @@ onBeforeUnmount(() => {
   window.removeEventListener(API_CONFIGS_UPDATED_EVENT, refreshApiConfigs)
 })
 
-watch(
-  () => route.path,
-  (p) => {
-    if (p === '/caption') refreshApiConfigs()
-  }
-)
 onActivated(() => refreshApiConfigs())
 
 // ===================== 本地模型加载/卸载 =====================
@@ -300,7 +310,7 @@ async function captionSingle() {
       })
     )
   } else {
-    await refreshApiConfigs()
+    if (!(await refreshApiConfigs())) return
     const cfg = selectedConfig.value
     if (!cfg) {
       captionError.value = '请先在设置页面添加并启用 API 配置'
@@ -371,7 +381,7 @@ async function captionBatch() {
       })
     )
   } else {
-    await refreshApiConfigs()
+    if (!(await refreshApiConfigs())) return
     await runBatchTask(() => callOnlineBatch(files, commonParams))
   }
 }
@@ -445,7 +455,7 @@ async function runBatchTask(apiFn) {
 
 const canGenerate = computed(() => {
   if (captionMode.value === 'local') return localModelLoaded.value
-  return hasEnabledConfig.value
+  return !apiConfigError.value && hasEnabledConfig.value
 })
 
 // ===================== 保存 =====================
@@ -587,7 +597,7 @@ const showSettings = ref(true)
       :processing-action="processingAction"
       :progress-done="progressDone"
       :progress-total="progressTotal"
-      processing-label="Caption"
+      processing-label="生成描述"
       @toggle-select-all="toggleSelectAll"
       @refresh="refreshImages"
       @clear-folder="clearCaptionFolder"
@@ -630,7 +640,11 @@ const showSettings = ref(true)
             <div class="sp-section-title">
               API 配置 <span class="sp-hint">({{ enabledConfigs.length }} 个启用)</span>
             </div>
-            <div v-if="apiConfigs.length === 0" class="sp-empty-hint">
+            <div v-if="apiConfigError" class="sp-empty-hint" role="alert">
+              {{ apiConfigError }}
+              <button @click="refreshApiConfigs">重试</button>
+            </div>
+            <div v-else-if="apiConfigs.length === 0" class="sp-empty-hint">
               暂无配置，请前往设置页面添加
             </div>
             <div v-else class="sp-config-list">
@@ -817,7 +831,7 @@ const showSettings = ref(true)
         <div class="sp-section">
           <div class="sp-section-title">生成参数</div>
           <div class="sp-param-row">
-            <span class="sp-param-label">Temperature</span>
+            <span class="sp-param-label">温度</span>
             <input
               v-model.number="temperature"
               type="range"
@@ -841,7 +855,7 @@ const showSettings = ref(true)
             <span class="sp-param-value">{{ topP.toFixed(2) }}</span>
           </div>
           <div class="sp-param-row">
-            <span class="sp-param-label">Max Tokens</span>
+            <span class="sp-param-label">最大 Token 数</span>
             <input
               v-model.number="maxTokens"
               type="number"
@@ -874,7 +888,7 @@ const showSettings = ref(true)
         </div>
 
         <div class="sp-section">
-          <div class="sp-section-title">System Prompt</div>
+          <div class="sp-section-title">系统提示词</div>
           <textarea
             v-model="systemPrompt"
             class="sp-textarea"
@@ -884,41 +898,29 @@ const showSettings = ref(true)
         </div>
 
         <div class="sp-section">
-          <div class="sp-section-title">User Prompt</div>
+          <div class="sp-section-title">用户提示词</div>
           <textarea v-model="userPrompt" class="sp-textarea" rows="2" spellcheck="false"></textarea>
         </div>
       </div>
 
       <!-- ===== 中间：图片网格 ===== -->
-      <div ref="gridRef" class="image-grid caption-grid">
-        <div
-          v-for="img in images"
-          :key="img.path"
-          :data-path="img.path"
-          :class="[
-            'image-card',
-            { selected: isSelected(img), editing: editingImage?.path === img.path }
-          ]"
-          @click="openEditor(img)"
-        >
-          <img
-            v-if="thumbnails[img.path]"
-            :src="thumbnails[img.path]"
-            :alt="img.name"
-            draggable="false"
-          />
-          <div v-else class="image-placeholder"></div>
-          <div class="image-name-overlay">{{ img.name }}</div>
+      <ImageGrid
+        :images="images"
+        :thumbnails="thumbnails"
+        :is-selected="isSelected"
+        :card-class="captionCardClass"
+        grid-class="caption-grid"
+        @load-thumbnail="enqueueThumbnail"
+        @open="openEditor"
+        @toggle-select="toggleSelect"
+      >
+        <template #default="{ img }">
           <span v-if="getCaptionPreview(img.path)" class="caption-badge">{{
             getCaptionPreview(img.path)
           }}</span>
           <span v-if="dirtySet.has(img.path)" class="dirty-dot" title="未保存"></span>
-          <span
-            :class="['checkbox', { checked: isSelected(img) }]"
-            @click.stop="toggleSelect(img)"
-          ></span>
-        </div>
-      </div>
+        </template>
+      </ImageGrid>
 
       <!-- ===== 右侧：描述编辑面板 ===== -->
       <Transition name="panel-slide">

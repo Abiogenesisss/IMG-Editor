@@ -45,10 +45,10 @@
 .process-toolbar {
   position: relative;
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   flex-shrink: 0;
-  padding-bottom: 10px;
+  padding-bottom: 12px;
   border-bottom: none;
 }
 
@@ -89,7 +89,7 @@
 
 .folder-path {
   flex: 1;
-  height: 30px;
+  height: 32px;
   display: flex;
   align-items: center;
   padding: 0 9px;
@@ -102,12 +102,13 @@
 }
 
 .folder-path:hover {
-  border-color: var(--color-border-hover);
+  border-color: var(--color-accent-border);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
 
 .folder-input {
   flex: 1;
-  height: 30px;
+  height: 32px;
   padding: 0 9px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -120,13 +121,14 @@
   transition: border-color 0.15s;
 }
 .folder-input:focus {
-  border-color: var(--color-text);
+  border-color: var(--color-accent-border);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
 
 .folder-browse-btn {
   flex-shrink: 0;
   width: 30px;
-  height: 30px;
+  height: 32px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface-soft);
@@ -142,10 +144,11 @@
     box-shadow 0.15s;
   padding: 0;
 }
-.folder-browse-btn:hover {
-  border-color: var(--color-text);
+.folder-browse-btn:hover:not(:disabled) {
+  border-color: var(--color-border);
   color: var(--color-text);
   background: var(--color-surface-hover);
+  box-shadow: inset 0 0 0 1px var(--color-accent-border);
 }
 
 .path-text {
@@ -190,7 +193,7 @@
   font-size: 12px;
   line-height: 1.2;
   cursor: pointer;
-  box-shadow: none;
+  box-shadow: var(--shadow-button);
   transition:
     color 0.15s,
     background-color 0.15s,
@@ -203,8 +206,8 @@
 
 .action-btn:hover:not(:disabled) {
   filter: none;
-  background: var(--color-text-secondary);
-  border-color: var(--color-text-secondary);
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
 }
 
 .action-btn.active {
@@ -226,13 +229,16 @@
   flex: 1;
   height: 3px;
   background: var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   overflow: hidden;
 }
 
 .progress-bar-fill {
   display: block;
   height: 100%;
+  border-radius: 999px;
+  background: var(--color-active-bg);
+  animation: none;
   transition: width 0.15s ease;
 }
 
@@ -249,7 +255,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 32px;
+  min-height: 34px;
   padding: 3px 0;
   border-bottom: 1px solid var(--color-border-light);
   flex-shrink: 0;
@@ -313,7 +319,7 @@
   height: 26px;
   border: none;
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--color-surface-soft);
   color: var(--color-text-muted);
   cursor: pointer;
   padding: 0;
@@ -324,8 +330,15 @@
 
 .bar-icon-btn:hover:not(:disabled) {
   color: var(--color-text);
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--color-border);
+  background: var(--color-surface-hover);
+  box-shadow: inset 0 0 0 1px var(--color-accent-border);
+}
+
+.folder-browse-btn:focus-visible,
+.bar-icon-btn:focus-visible {
+  outline: none;
+  border-color: var(--color-accent-border);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
 
 .bar-icon-btn:disabled {
@@ -377,6 +390,8 @@
 .checkbox.checked {
   background: var(--color-active-bg);
   border-color: var(--color-active-bg);
+  color: var(--color-active-text);
+  box-shadow: var(--shadow-button);
 }
 
 .checkbox.checked::after {
@@ -397,10 +412,10 @@
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
   grid-auto-rows: max-content;
   gap: 9px;
-  padding-top: 6px;
+  padding-top: 8px;
   padding-bottom: 12px;
   align-content: start;
 }
@@ -409,7 +424,7 @@
 .image-card {
   position: relative;
   aspect-ratio: 1;
-  border: 1px solid var(--color-border-light);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition:
@@ -418,7 +433,18 @@
     transform 0.18s ease;
   overflow: hidden;
   background: var(--color-background-mute);
-  box-shadow: none;
+  box-shadow: var(--shadow-xs);
+}
+
+.image-card:hover {
+  border-color: var(--color-accent-border);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.image-card.selected {
+  border-color: var(--color-active-bg);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
 
 .image-card > .checkbox {
@@ -540,7 +566,7 @@
   font-size: 12px;
   background: var(--color-overlay-soft);
   padding: 4px 14px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   white-space: nowrap;
   pointer-events: none;
 }
@@ -576,11 +602,11 @@
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  background: var(--color-panel-bg);
+  background: var(--color-input-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 10px;
-  box-shadow: none;
+  box-shadow: var(--shadow-md);
   z-index: 50;
   display: flex;
   flex-direction: column;
@@ -607,7 +633,7 @@
   height: 26px;
   padding: 0 6px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--color-text);
   background: var(--color-input-bg);
@@ -648,7 +674,7 @@
   color: var(--color-active-text);
   font-size: 12px;
   cursor: pointer;
-  box-shadow: none;
+  box-shadow: var(--shadow-button);
   transition:
     background 0.15s,
     filter 0.15s,
@@ -656,7 +682,9 @@
 }
 
 .panel-run:hover {
-  filter: brightness(1.08);
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+  filter: none;
 }
 
 /* 面板内复选框行 */
@@ -719,6 +747,7 @@
   background: var(--color-active-bg);
   border-color: var(--color-active-bg);
   color: var(--color-active-text);
+  box-shadow: var(--shadow-button);
 }
 
 /* ============================
@@ -726,9 +755,9 @@
    ============================ */
 .toggle-switch {
   position: relative;
-  width: 30px;
-  height: 16px;
-  border-radius: var(--radius-sm);
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
   background: var(--color-border-unchecked);
   transition: background 0.2s;
   flex-shrink: 0;
@@ -741,9 +770,15 @@
   position: absolute;
   top: 2px;
   left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
   background: var(--color-toggle-knob);
   box-shadow: none;
   transition: transform 0.2s;
+}
+.toggle-switch.on .toggle-knob {
+  transform: translateX(16px);
 }
 
 /* ============================
@@ -853,7 +888,7 @@
   max-width: 100%;
   max-height: 220px;
   object-fit: contain;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
 }
 
 .editor-textarea {
@@ -861,7 +896,7 @@
   min-height: 60px;
   padding: 8px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   font-size: 12px;
   line-height: 1.6;
   color: var(--color-text);
@@ -906,150 +941,4 @@
 .bar-icon-btn.active {
   color: var(--color-info);
   background: var(--color-info-light);
-}
-
-/* Unified component polish */
-.folder-path,
-.folder-input,
-.folder-browse-btn,
-.action-btn,
-.bar-icon-btn,
-.checkbox,
-.image-card,
-.preview-img,
-.preview-filename,
-.action-panel,
-.panel-row input[type='number'],
-.panel-run,
-.format-tag,
-.error-bar,
-.editor-nav-btn,
-.editor-preview img,
-.editor-textarea {
-  border-radius: var(--radius-sm);
-}
-
-.process-toolbar {
-  gap: 12px;
-  padding-bottom: 12px;
-}
-
-.folder-label,
-.select-all-label,
-.path-text,
-.path-placeholder,
-.status-text {
-  font-size: 12px;
-}
-
-.folder-path,
-.folder-input,
-.folder-browse-btn {
-  height: 32px;
-}
-
-.folder-path,
-.folder-input,
-.action-panel,
-.editor-textarea {
-  background: var(--color-input-bg);
-}
-
-.folder-browse-btn,
-.bar-icon-btn {
-  background: var(--color-surface-soft);
-}
-
-.folder-path:hover,
-.folder-input:focus {
-  border-color: var(--color-accent-border);
-  box-shadow: 0 0 0 3px var(--color-focus-ring);
-}
-
-.folder-browse-btn:hover:not(:disabled),
-.bar-icon-btn:hover:not(:disabled) {
-  color: var(--color-text);
-  background: var(--color-surface-hover);
-  box-shadow: inset 0 0 0 1px var(--color-accent-border);
-}
-
-.folder-browse-btn:focus-visible,
-.bar-icon-btn:focus-visible {
-  outline: none;
-  border-color: var(--color-accent-border);
-  box-shadow: 0 0 0 2px var(--color-focus-ring);
-}
-
-.action-btn,
-.panel-run,
-.format-tag.selected,
-.checkbox.checked {
-  background: var(--color-active-bg);
-  border-color: var(--color-active-bg);
-  color: var(--color-active-text);
-  box-shadow: var(--shadow-button);
-}
-
-.action-btn:hover:not(:disabled),
-.panel-run:hover,
-.update-btn:hover {
-  background: var(--color-accent-hover);
-  border-color: var(--color-accent-hover);
-  filter: none;
-}
-
-.status-bar {
-  min-height: 34px;
-}
-
-.progress-bar-track,
-.progress-bar-fill,
-.toggle-switch,
-.toggle-knob {
-  border-radius: 999px;
-}
-
-.progress-bar-fill {
-  background: var(--color-active-bg);
-  animation: none;
-}
-
-.toggle-switch {
-  width: 34px;
-  height: 18px;
-}
-
-.toggle-knob {
-  width: 14px;
-  height: 14px;
-}
-
-.toggle-switch.on .toggle-knob {
-  transform: translateX(16px);
-}
-
-.image-grid {
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-  gap: 9px;
-  padding-top: 8px;
-}
-
-.image-card {
-  border-color: var(--color-border);
-  box-shadow: var(--shadow-xs);
-}
-
-.image-card:hover {
-  border-color: var(--color-accent-border);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
-}
-
-.image-card.selected {
-  border-color: var(--color-active-bg);
-  box-shadow: 0 0 0 3px var(--color-focus-ring);
-}
-
-.action-panel {
-  box-shadow: var(--shadow-md);
 }

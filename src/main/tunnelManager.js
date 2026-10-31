@@ -42,6 +42,7 @@ let tunnelState = {
   startedAt: null,
   stoppedAt: null,
   command: '',
+  remoteCommand: '',
   mappings: [],
   error: ''
 }
@@ -332,10 +333,26 @@ function buildSshBaseConfig(config = {}) {
 }
 
 function buildSshConnectionConfig(config = {}) {
+  const mappings = normalizeTunnelMappings(config.mappings)
   return {
     ...buildSshBaseConfig(config),
-    mappings: normalizeTunnelMappings(config.mappings)
+    mappings,
+    remoteCommand: normalizeRemoteCommand(config.remoteCommand, mappings)
   }
+}
+
+function normalizeRemoteCommand(value, mappings) {
+  const command = String(value || '').trim()
+  if (!command) return ''
+
+  const first = mappings[0] || {}
+  return command
+    .split('{remotePort}')
+    .join(first.remotePort || '')
+    .split('{localPort}')
+    .join(first.localPort || '')
+    .split('{port}')
+    .join(first.remotePort || '')
 }
 
 function listenForwardServer(client, mapping) {
@@ -391,6 +408,45 @@ async function openForwardServers(client, mappings) {
   for (const mapping of mappings) {
     await listenForwardServer(client, mapping)
   }
+}
+
+function appendRemoteOutput(level, data) {
+  for (const line of String(data || '').split(/\r?\n/)) {
+    const message = line.trimEnd()
+    if (message) appendTunnelLog(level, message)
+  }
+}
+
+function startRemoteCommand(client, command) {
+  if (!command) return Promise.resolve()
+
+  return new Promise((resolve, reject) => {
+    client.exec(command, (err, stream) => {
+      if (err) {
+        reject(err)
+        return
+      }
+
+      tunnelStreams.add(stream)
+      appendTunnelLog('info', `remote command: ${command}`)
+      stream.on('data', (data) => appendRemoteOutput('stdout', data))
+      stream.stderr.on('data', (data) => appendRemoteOutput('stderr', data))
+      stream.once('close', (code, signal) => {
+        tunnelStreams.delete(stream)
+        if (tunnelStopping) return
+        const codeText = code === null || code === undefined ? '' : ` with code ${code}`
+        const signalText = signal ? ` (${signal})` : ''
+        appendTunnelLog(
+          code === 0 ? 'info' : 'error',
+          `remote command exited${codeText}${signalText}`
+        )
+      })
+      stream.once('error', (streamErr) => {
+        appendTunnelLog('error', `remote command error: ${streamErr.message}`)
+      })
+      resolve()
+    })
+  })
 }
 
 function emitUploadProgress(progress = {}) {
@@ -470,29 +526,30 @@ function normalizeRemoteDir(value) {
   const text = String(value || '')
     .trim()
     .replace(/\\/g, '/')
-    .replace(/\/+$/, '')
   if (!text) throw new Error('请填写远程目录')
-  return text || '/'
+  return text.replace(/\/+$/, '') || '/'
 }
 
-async function ensureRemoteDir(sftp, remoteDir) {
-  const normalized = normalizeRemoteDir(remoteDir)
-  if (normalized === '/' || normalized === '.') return
-
-  let current = normalized.startsWith('/') ? '/' : ''
-  for (const part of normalized.split('/').filter(Boolean)) {
-    current = current === '/' ? `/${part}` : current ? `${current}/${part}` : part
-    try {
-      const attrs = await sftpStat(sftp, current)
-      if (!attrs?.isDirectory?.()) throw new Error(`${current} 不是目录`)
-    } catch {
-      try {
-        await sftpMkdir(sftp, current)
-      } catch (err) {
-        const attrs = await sftpStat(sftp, current).catch(() => null)
-        if (!attrs?.isDirectory?.()) throw err
-      }
+async function ensureRemoteDirs(sftp, remoteDirs) {
+  const directories = new Set()
+  for (const remoteDir of remoteDirs) {
+    let current = remoteDir.startsWith('/') ? '/' : ''
+    for (const part of remoteDir.split('/').filter(Boolean)) {
+      current = current === '/' ? `/${part}` : current ? `${current}/${part}` : part
+      if (current !== '.') directories.add(current)
     }
+  }
+  for (const current of directories) {
+    let attrs
+    try {
+      attrs = await sftpStat(sftp, current)
+    } catch (err) {
+      // SFTP status 2 表示路径不存在；权限或连接错误直接交给上传入口处理。
+      if (err.code !== 2) throw err
+      await sftpMkdir(sftp, current)
+      continue
+    }
+    if (!attrs.isDirectory()) throw new Error(`${current} 不是目录`)
   }
 }
 
@@ -578,10 +635,10 @@ export async function uploadTunnelFiles(config = {}) {
     temporary = uploadClient.temporary
     sftp = await openSftp(client)
 
-    await ensureRemoteDir(sftp, remoteDir)
-    for (const dir of dirs) {
-      await ensureRemoteDir(sftp, pathPosix.join(remoteDir, dir.relativePath))
-    }
+    await ensureRemoteDirs(sftp, [
+      remoteDir,
+      ...dirs.map((dir) => pathPosix.join(remoteDir, dir.relativePath))
+    ])
 
     let uploadedBytes = 0
     for (let index = 0; index < files.length; index += 1) {
@@ -597,7 +654,6 @@ export async function uploadTunnelFiles(config = {}) {
       })
 
       try {
-        await ensureRemoteDir(sftp, pathPosix.dirname(remotePath))
         await sftpFastPut(sftp, item.localPath, remotePath)
         uploadedBytes += item.size
         results.push({
@@ -756,7 +812,7 @@ export async function startTunnel(config = {}) {
     await stopTunnel()
   }
 
-  const { preview, mappings, ssh } = buildSshConnectionConfig(config)
+  const { preview, mappings, ssh, remoteCommand } = buildSshConnectionConfig(config)
   await assertLocalPortsAvailable(mappings)
   const startedAt = new Date().toISOString()
 
@@ -767,6 +823,7 @@ export async function startTunnel(config = {}) {
     startedAt,
     stoppedAt: null,
     command: preview,
+    remoteCommand,
     mappings,
     error: ''
   })
@@ -779,6 +836,7 @@ export async function startTunnel(config = {}) {
     appendTunnelLog('success', `SSH 已认证：${ssh.username}@${ssh.host}:${ssh.port}`)
     try {
       await openForwardServers(client, mappings)
+      await startRemoteCommand(client, remoteCommand)
       if (tunnelClient === client) {
         setTunnelState({ state: 'running', pid: null, error: '' })
         appendTunnelLog('success', '隧道已运行')

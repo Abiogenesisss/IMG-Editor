@@ -1,7 +1,9 @@
 """透明通道合成"""
 
-import os
 from PIL import Image
+import os
+
+from tasks.image_utils import output_path, save_image
 
 
 def _has_transparency(img):
@@ -32,20 +34,11 @@ def flatten_alpha_one(file_path, output_dir, background="white"):
             canvas = Image.new("RGBA", rgba.size, (*bg_color, 255))
             flattened = Image.alpha_composite(canvas, rgba).convert("RGB")
 
-            name, ext = os.path.splitext(os.path.basename(file_path))
+            _, ext = os.path.splitext(file_path)
             ext = ext or ".png"
             suffix = "_black_bg" if background == "black" else "_white_bg"
-            if os.path.normpath(output_dir) == os.path.normpath(os.path.dirname(file_path)):
-                out_name = f"{name}{suffix}{ext}"
-            else:
-                out_name = f"{name}{ext}"
-            out_path = os.path.join(output_dir, out_name)
-
-            save_kwargs = {}
-            if ext.lower() in (".jpg", ".jpeg", ".webp"):
-                save_kwargs["quality"] = 95
-
-            flattened.save(out_path, **save_kwargs)
+            out_path = output_path(file_path, output_dir, suffix, ext)
+            save_image(flattened, out_path)
 
         return {"file": file_path, "output": out_path, "ok": True, "background": background}
     except Exception as e:

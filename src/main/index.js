@@ -1,8 +1,9 @@
 import { app, protocol, net, session } from 'electron'
-import { isForcedQuitInProgress, registerIPC, requestForcedQuit } from './ipc'
+import { registerIPC } from './ipc'
+import { isForcedQuitInProgress, requestForcedQuit } from './taskRuntime'
 import { openMainWindow, hasAnyWindow } from './windowManager'
 import { setupAutoUpdater } from './updater'
-import { isLocalFileAccessAllowed } from './localFileAccess'
+import { isLocalFileAccessAllowed } from './localFiles'
 import { fileURLToPath, pathToFileURL } from 'url'
 
 protocol.registerSchemesAsPrivileged([

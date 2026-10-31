@@ -2,7 +2,7 @@ import { autoUpdater } from 'electron-updater'
 import { ipcMain, app } from 'electron'
 import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { prepareForUpdateRestart } from './ipc'
+import { prepareForUpdateRestart } from './taskRuntime'
 import { getMainWindow } from './windowManager'
 
 // 自动检测更新开关（在 setupAutoUpdater 之前声明）
@@ -17,6 +17,7 @@ function sendToRenderer(channel, ...args) {
 }
 
 export function setupAutoUpdater() {
+  const settingsPath = join(app.getPath('userData'), 'auto-update-settings.json')
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
 
@@ -87,19 +88,13 @@ export function setupAutoUpdater() {
 
   // 渲染进程设置自动检测更新开关
   ipcMain.handle('set-auto-check-update', (_event, enabled) => {
+    writeFileSync(settingsPath, JSON.stringify({ autoCheck: enabled }), 'utf-8')
     autoCheckEnabled = enabled
-    try {
-      const settingsPath = join(app.getPath('userData'), 'auto-update-settings.json')
-      writeFileSync(settingsPath, JSON.stringify({ autoCheck: enabled }), 'utf-8')
-    } catch {
-      /* ignore */
-    }
     return true
   })
 
   // 从持久化文件读取自动更新设置
   try {
-    const settingsPath = join(app.getPath('userData'), 'auto-update-settings.json')
     const data = JSON.parse(readFileSync(settingsPath, 'utf-8'))
     autoCheckEnabled = data.autoCheck !== false
   } catch {

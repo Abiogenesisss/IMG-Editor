@@ -1,8 +1,8 @@
 <script setup>
 import { ref } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
-import { useGridObserver } from '../composables/useGridObserver'
 import FolderRow from '../components/FolderRow.vue'
+import ImageGrid from '../components/ImageGrid.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
 
 const {
@@ -24,6 +24,7 @@ const {
   previewImage,
   openPreview,
   closePreview,
+  removeDeletedImages,
   deleteSelected,
   processingAction,
   progressDone,
@@ -32,10 +33,8 @@ const {
   refreshing,
   refreshImages,
   abortTask,
-  observeGrid
+  enqueueThumbnail
 } = useImageBrowser()
-
-const gridRef = useGridObserver(images, observeGrid)
 
 const activePanel = ref(null)
 
@@ -360,45 +359,21 @@ function previewBlurNoise() {
       @delete-selected="deleteSelected"
       @abort="abortTask"
     />
-
     <!-- 图片网格 -->
-    <div v-if="imageCount > 0" ref="gridRef" class="image-grid">
-      <div
-        v-for="img in images"
-        :key="img.path"
-        :data-path="img.path"
-        :class="['image-card', { selected: isSelected(img) }]"
-        @click="openPreview(img)"
-      >
-        <img
-          v-if="thumbnails[img.path]"
-          :src="thumbnails[img.path]"
-          :alt="img.name"
-          draggable="false"
-        />
-        <div v-else class="image-placeholder"></div>
-        <div class="image-name-overlay">{{ img.name }}</div>
-        <span
-          :class="['checkbox', { checked: isSelected(img) }]"
-          @click.stop="toggleSelect(img)"
-        ></span>
-      </div>
-    </div>
-
-    <!-- 空状态 -->
-    <div v-else class="empty-state">
-      <span class="empty-text">选择输入文件夹以加载图片</span>
-    </div>
+    <ImageGrid
+      :images="images"
+      :thumbnails="thumbnails"
+      :is-selected="isSelected"
+      :preview-image="previewImage"
+      :delete-disabled="!!processingAction"
+      @load-thumbnail="enqueueThumbnail"
+      @open="openPreview"
+      @toggle-select="toggleSelect"
+      @close-preview="closePreview"
+      @deleted="removeDeletedImages"
+    />
 
     <!-- 原图预览遮罩 -->
-    <Teleport to="body">
-      <Transition name="preview-fade">
-        <div v-if="previewImage" class="preview-overlay" @click="closePreview">
-          <img :src="previewImage.url" :alt="previewImage.name" class="preview-img" />
-          <div class="preview-filename">{{ previewImage.name }}</div>
-        </div>
-      </Transition>
-    </Teleport>
 
     <!-- 增强预览遮罩 -->
     <Teleport to="body">

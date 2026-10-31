@@ -3,7 +3,6 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   AlertCircle,
   CheckCircle2,
-  ChevronDown,
   Download,
   Eraser,
   ExternalLink,
@@ -13,6 +12,7 @@ import {
   Search,
   X
 } from 'lucide-vue-next'
+import CommonUi from '../components/CommonUi.vue'
 import FolderRow from '../components/FolderRow.vue'
 import IconButton from '../components/IconButton.vue'
 import { useLocalStorage } from '../composables/useLocalStorage'
@@ -110,7 +110,6 @@ const scanWarnings = ref([])
 const taskError = ref('')
 const taskResult = ref(null)
 const genericStatus = ref('')
-const booruSiteDropOpen = ref(false)
 const siteRunning = ref(false)
 const scanning = ref(false)
 const downloading = ref(false)
@@ -199,7 +198,6 @@ const skipReasonText = computed(() => {
 })
 
 onMounted(() => {
-  document.addEventListener('click', closeOpenSelects)
   removeProgressListener = window.api.onTaskProgress((data) => {
     if (!String(data?.scope || '').startsWith('grab-')) return
     taskDone.value = data.done || 0
@@ -210,7 +208,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  document.removeEventListener('click', closeOpenSelects)
   if (removeProgressListener) removeProgressListener()
 })
 
@@ -242,21 +239,6 @@ function selectTab(tab) {
   if (isBusy.value) return
   activeTab.value = tab
   taskError.value = ''
-  closeOpenSelects()
-}
-
-function closeOpenSelects() {
-  booruSiteDropOpen.value = false
-}
-
-function toggleBooruSiteSelect() {
-  if (isBusy.value) return
-  booruSiteDropOpen.value = !booruSiteDropOpen.value
-}
-
-function selectBooruSite(value) {
-  booruSite.value = value
-  booruSiteDropOpen.value = false
 }
 
 function toggleType(type) {
@@ -580,33 +562,7 @@ function openExternal(item) {
         <div class="form-grid">
           <div class="field">
             <span>站点</span>
-            <div class="grab-select">
-              <button
-                class="grab-select-trigger"
-                type="button"
-                :disabled="isBusy"
-                @click.stop="toggleBooruSiteSelect"
-              >
-                <span>{{ activeBooruLabel }}</span>
-                <ChevronDown
-                  :class="['grab-select-arrow', { open: booruSiteDropOpen }]"
-                  :size="15"
-                />
-              </button>
-              <Transition name="dropdown">
-                <div v-if="booruSiteDropOpen" class="grab-select-list" @click.stop>
-                  <button
-                    v-for="site in booruSites"
-                    :key="site.value"
-                    type="button"
-                    :class="['grab-select-item', { active: booruSite === site.value }]"
-                    @click="selectBooruSite(site.value)"
-                  >
-                    {{ site.label }}
-                  </button>
-                </div>
-              </Transition>
-            </div>
+            <CommonUi v-model="booruSite" :options="booruSites" :disabled="isBusy" />
           </div>
           <label class="field wide">
             <span>Tags</span>
@@ -1283,115 +1239,6 @@ function openExternal(item) {
   padding: 0 8px;
 }
 
-.grab-select {
-  position: relative;
-  width: 100%;
-}
-
-.grab-select-trigger {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-input-bg);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
-}
-
-.grab-select-trigger:hover:not(:disabled),
-.grab-select-trigger:focus-visible {
-  border-color: var(--color-text);
-  outline: none;
-}
-
-.grab-select-trigger:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.grab-select-trigger span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.grab-select-arrow {
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-  transition: transform 0.18s ease;
-}
-
-.grab-select-arrow.open {
-  transform: rotate(180deg);
-}
-
-.grab-select-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  z-index: 30;
-  max-height: 236px;
-  padding: 3px;
-  overflow-y: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  box-shadow: none;
-}
-
-.grab-select-item {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-}
-
-.grab-select-item:hover {
-  background: var(--color-surface-hover);
-}
-
-.grab-select-item.active {
-  background: var(--color-active-bg);
-  color: var(--color-active-text);
-}
-
-.dropdown-enter-active,
-.dropdown-leave-active {
-  transition:
-    opacity 0.15s,
-    transform 0.15s;
-  transform-origin: top center;
-}
-
-.dropdown-enter-from,
-.dropdown-leave-to {
-  opacity: 0;
-  transform: scaleY(0.96);
-}
-
 .field-input:focus,
 .source-input:focus,
 .cookie-input:focus {
@@ -1860,8 +1707,7 @@ function openExternal(item) {
   box-shadow: var(--shadow-xs);
 }
 
-.field-input,
-.grab-select-trigger {
+.field-input {
   height: 30px;
 }
 
@@ -1877,10 +1723,6 @@ function openExternal(item) {
 .primary-btn:hover:not(:disabled) {
   background: var(--color-accent-hover);
   border-color: var(--color-accent-hover);
-}
-
-.grab-select-list {
-  box-shadow: var(--shadow-md);
 }
 
 .metric {

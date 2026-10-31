@@ -1,10 +1,10 @@
 """批量缩放（Cover 模式 + RetinaFace 人脸检测智能裁剪）"""
 
-import os
 import numpy as np
 from PIL import Image
 
 from tasks.gpu_config import get_onnx_providers
+from tasks.image_utils import output_path, save_image
 
 # 每个 worker 进程缓存检测器，只加载一次
 _detector = None
@@ -38,9 +38,6 @@ def resize_one(file_path, output_dir, width, height,
     3. 未检测到人脸则居中裁剪
     """
     try:
-        base = os.path.basename(file_path)
-        name, ext = os.path.splitext(base)
-
         with Image.open(file_path) as img:
             img = img.convert("RGB")
             orig_w, orig_h = img.size
@@ -87,13 +84,8 @@ def resize_one(file_path, output_dir, width, height,
             cropped = resized.crop((crop_x, crop_y, crop_x + width, crop_y + height))
 
             # 输出
-            if os.path.normpath(output_dir) == os.path.normpath(os.path.dirname(file_path)):
-                out_name = f"{name}_resized{ext}"
-            else:
-                out_name = base
-
-            out_path = os.path.join(output_dir, out_name)
-            cropped.save(out_path, quality=95)
+            out_path = output_path(file_path, output_dir, "_resized")
+            save_image(cropped, out_path)
 
         return {
             "file": file_path, "output": out_path, "ok": True,

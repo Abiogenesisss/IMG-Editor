@@ -1,12 +1,13 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useImageBrowser } from '../composables/useImageBrowser'
-import { useGridObserver } from '../composables/useGridObserver'
 import { createFallbackUpscaleCatalog, loadUpscaleCatalog } from '../services/upscaleModels'
+import CommonUi from '../components/CommonUi.vue'
 import FolderRow from '../components/FolderRow.vue'
+import ImageGrid from '../components/ImageGrid.vue'
 import IconButton from '../components/IconButton.vue'
 import ImageStatusBar from '../components/ImageStatusBar.vue'
-import { ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, X } from 'lucide-vue-next'
 import {
   getUpscaleDenoiseOptions,
   getUpscaleScaleOptions,
@@ -36,6 +37,7 @@ const {
   previewImage,
   openPreview,
   closePreview,
+  removeDeletedImages,
   deleteSelected,
   processingAction,
   progressDone,
@@ -44,23 +46,18 @@ const {
   refreshing,
   refreshImages,
   abortTask,
-  observeGrid
+  enqueueThumbnail
 } = useImageBrowser()
-
-const gridRef = useGridObserver(images, observeGrid)
 
 // --- 面板控制 ---
 const activePanel = ref(null)
-const denoiseDropOpen = ref(false)
 
 function togglePanel(name) {
   activePanel.value = activePanel.value === name ? null : name
-  denoiseDropOpen.value = false
 }
 
 function closePanel() {
   activePanel.value = null
-  denoiseDropOpen.value = false
 }
 
 const upscaleCatalog = ref(createFallbackUpscaleCatalog())
@@ -68,6 +65,16 @@ const upscaleError = ref('')
 const model = ref('real-cugan')
 const w2xStyle = ref('art')
 const tta = ref(false)
+
+function createUnavailableUpscaleCatalog() {
+  const catalog = createFallbackUpscaleCatalog()
+  for (const config of Object.values(catalog)) {
+    for (const variant of config.variants) {
+      variant.installed = false
+    }
+  }
+  return catalog
+}
 
 // --- 超分参数 ---
 const scale = ref(2)
@@ -133,6 +140,7 @@ async function refreshUpscaleCatalog() {
     }
     upscaleError.value = selectionValidation.value.valid ? '' : selectionValidation.value.error
   } catch (err) {
+    upscaleCatalog.value = createUnavailableUpscaleCatalog()
     upscaleError.value = err.message || '超分模型列表读取失败'
   }
 }
@@ -144,16 +152,6 @@ const previewModes = [
   { value: 'side', label: '并排' },
   { value: 'stack', label: '并列' }
 ]
-
-const denoiseLabel = computed(() => {
-  const opt = denoiseOptions.value.find((o) => o.value === denoise.value)
-  return opt ? opt.label : ''
-})
-
-function selectDenoise(val) {
-  denoise.value = val
-  denoiseDropOpen.value = false
-}
 
 // --- 超分预览 ---
 const upscalePreviewLoading = ref(false)
@@ -196,7 +194,6 @@ function closeUpscalePreview() {
 
 function clearUpscaleFolder() {
   activePanel.value = null
-  denoiseDropOpen.value = false
   upscalePreviewData.value = null
   upscalePreviewLoading.value = false
   sliderPos.value = 50
@@ -311,11 +308,7 @@ const canPreview = computed(
           >
             参数设置
           </button>
-          <div
-            v-if="activePanel === 'params'"
-            class="action-panel upscale-panel"
-            @click="denoiseDropOpen = false"
-          >
+          <div v-if="activePanel === 'params'" class="action-panel upscale-panel">
             <!-- 模型选择 -->
             <div class="panel-section">
               <span class="panel-label">超分模型</span>
@@ -350,28 +343,7 @@ const canPreview = computed(
             <!-- 降噪配置 -->
             <div class="panel-section">
               <span class="panel-label">降噪配置</span>
-              <div class="custom-select" @click.stop="denoiseDropOpen = !denoiseDropOpen">
-                <span class="custom-select-value">{{ denoiseLabel }}</span>
-                <ChevronDown
-                  class="custom-select-arrow"
-                  :class="{ open: denoiseDropOpen }"
-                  :size="12"
-                  :stroke-width="2.5"
-                  aria-hidden="true"
-                />
-                <Transition name="dropdown">
-                  <div v-if="denoiseDropOpen" class="custom-select-list">
-                    <div
-                      v-for="opt in denoiseOptions"
-                      :key="opt.value"
-                      :class="['custom-select-item', { active: denoise === opt.value }]"
-                      @click.stop="selectDenoise(opt.value)"
-                    >
-                      {{ opt.label }}
-                    </div>
-                  </div>
-                </Transition>
-              </div>
+              <CommonUi v-model="denoise" :options="denoiseOptions" />
             </div>
             <!-- Waifu2x 风格 (仅 waifu2x 模型显示) -->
             <template v-if="model === 'waifu2x'">
@@ -447,45 +419,21 @@ const canPreview = computed(
       @delete-selected="deleteSelected"
       @abort="abortTask"
     />
-
     <!-- 图片网格 -->
-    <div v-if="imageCount > 0" ref="gridRef" class="image-grid">
-      <div
-        v-for="img in images"
-        :key="img.path"
-        :data-path="img.path"
-        :class="['image-card', { selected: isSelected(img) }]"
-        @click="openPreview(img)"
-      >
-        <img
-          v-if="thumbnails[img.path]"
-          :src="thumbnails[img.path]"
-          :alt="img.name"
-          draggable="false"
-        />
-        <div v-else class="image-placeholder"></div>
-        <div class="image-name-overlay">{{ img.name }}</div>
-        <span
-          :class="['checkbox', { checked: isSelected(img) }]"
-          @click.stop="toggleSelect(img)"
-        ></span>
-      </div>
-    </div>
-
-    <!-- 空状态 -->
-    <div v-else class="empty-state">
-      <span class="empty-text">选择输入文件夹以加载图片</span>
-    </div>
+    <ImageGrid
+      :images="images"
+      :thumbnails="thumbnails"
+      :is-selected="isSelected"
+      :preview-image="previewImage"
+      :delete-disabled="!!processingAction"
+      @load-thumbnail="enqueueThumbnail"
+      @open="openPreview"
+      @toggle-select="toggleSelect"
+      @close-preview="closePreview"
+      @deleted="removeDeletedImages"
+    />
 
     <!-- 原图预览遮罩 -->
-    <Teleport to="body">
-      <Transition name="preview-fade">
-        <div v-if="previewImage" class="preview-overlay" @click="closePreview">
-          <img :src="previewImage.url" :alt="previewImage.name" class="preview-img" />
-          <div class="preview-filename">{{ previewImage.name }}</div>
-        </div>
-      </Transition>
-    </Teleport>
 
     <!-- 超分预览遮罩 -->
     <Teleport to="body">
@@ -603,89 +551,6 @@ const canPreview = computed(
 /* 选项允许换行 */
 .panel-section .format-options {
   flex-wrap: wrap;
-}
-
-/* 自定义下拉框 */
-.custom-select {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--color-text);
-  background: var(--color-input-bg);
-  cursor: pointer;
-  user-select: none;
-  transition: border-color 0.15s;
-}
-
-.custom-select:hover {
-  border-color: var(--color-border-hover);
-}
-
-.custom-select-value {
-  flex: 1;
-}
-
-.custom-select-arrow {
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-  transition: transform 0.2s;
-}
-
-.custom-select-arrow.open {
-  transform: rotate(180deg);
-}
-
-.custom-select-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-md);
-  z-index: var(--z-dropdown);
-  overflow: hidden;
-}
-
-.custom-select-item {
-  padding: 6px 9px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition:
-    background 0.1s,
-    color 0.1s;
-}
-
-.custom-select-item:hover {
-  background: var(--color-surface-hover);
-}
-
-.custom-select-item.active {
-  background: var(--color-active-bg);
-  color: var(--color-active-text);
-}
-
-/* 下拉框动画 */
-.dropdown-enter-active,
-.dropdown-leave-active {
-  transition:
-    opacity 0.15s,
-    transform 0.15s;
-  transform-origin: top center;
-}
-
-.dropdown-enter-from,
-.dropdown-leave-to {
-  opacity: 0;
-  transform: scaleY(0.9);
 }
 
 /* 执行按钮强调色 */
@@ -949,11 +814,6 @@ const canPreview = computed(
 
 .preview-close-btn:hover {
   background: var(--color-overlay-strong);
-}
-
-.custom-select {
-  height: 32px;
-  background: var(--color-input-bg);
 }
 
 .upscale-run-btn,

@@ -3,7 +3,12 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import IconButton from './components/IconButton.vue'
 import { Copy, Minus, Moon, Square, Sun, X } from 'lucide-vue-next'
-import { mainNavItems, settingsNavItem, thanksNavItem } from './services/navigation'
+import {
+  keepAliveRouteNames,
+  mainNavItems,
+  settingsNavItem,
+  thanksNavItem
+} from './services/navigation'
 import { readStoredJson } from './composables/useLocalStorage'
 
 const router = useRouter()
@@ -263,21 +268,7 @@ onUnmounted(() => {
         <section class="workspace-content">
           <router-view v-slot="{ Component }">
             <Transition name="route-fade" mode="out-in">
-              <keep-alive
-                :include="[
-                  'ImageGrab',
-                  'ImageProcess',
-                  'DataAugment',
-                  'ImageTagger',
-                  'ImageAesthetic',
-                  'ImageUpscale',
-                  'ImageCaption',
-                  'ImageGenerate',
-                  'WorkflowCanvas',
-                  'TunnelTool'
-                ]"
-                :max="10"
-              >
+              <keep-alive :include="keepAliveRouteNames" :max="10">
                 <component :is="Component" class="route-view" />
               </keep-alive>
             </Transition>

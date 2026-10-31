@@ -237,7 +237,7 @@ def _download_tasks(tasks, done_start, total, progress_cb=None, cancel_event=Non
     if not tasks:
         return saved, failed, results
 
-    workers = min(MAX_WORKERS, max(1, len(tasks)))
+    workers = min(MAX_WORKERS, len(tasks))
     completed = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(_download_binary, task, cancel_event) for task in tasks]
@@ -251,8 +251,6 @@ def _download_tasks(tasks, done_start, total, progress_cb=None, cancel_event=Non
                     resume_ids.add(str(result["resume_key"]))
                     if resume_path:
                         _save_resume(resume_path, resume_ids)
-            elif result.get("cancelled"):
-                failed += 1
             else:
                 failed += 1
 
@@ -912,11 +910,6 @@ def _pixiv_entry_ids(session, mode, query, cookie, start_page, end_page, limit):
         return list(dict.fromkeys(ids))[:limit]
 
     raise RuntimeError(f"unsupported Pixiv mode: {mode}")
-
-
-def _pixiv_tags(detail):
-    tags = detail.get("tags", {}).get("tags", [])
-    return [str(item.get("tag") or "") for item in tags if item.get("tag")]
 
 
 def _pixiv_bookmark_count(detail):
